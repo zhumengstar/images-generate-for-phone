@@ -655,7 +655,9 @@ def _proxy_prompt_polish(prompt: str, mode: str, headers: dict[str, str]) -> tup
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request_headers = {
         **headers,
+        "Accept": "application/json",
         "Content-Type": "application/json",
+        "User-Agent": "curl/8.0.1",
     }
     if api_key:
         request_headers["Authorization"] = f"Bearer {api_key}"
