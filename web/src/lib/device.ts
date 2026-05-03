@@ -1,13 +1,42 @@
 "use client";
 
+const CLIENT_ID_STORAGE_KEY = "images-generate-client-id";
+
+function createClientId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  const randomPart = Array.from({ length: 4 }, () =>
+    Math.floor(Math.random() * 0xffffffff)
+      .toString(16)
+      .padStart(8, "0"),
+  ).join("");
+  return `${Date.now().toString(16)}-${randomPart}`;
+}
+
+function getStoredClientId() {
+  if (typeof window === "undefined") {
+    return "server";
+  }
+
+  try {
+    const storedClientId = window.localStorage.getItem(CLIENT_ID_STORAGE_KEY);
+    if (storedClientId) {
+      return storedClientId;
+    }
+
+    const nextClientId = createClientId();
+    window.localStorage.setItem(CLIENT_ID_STORAGE_KEY, nextClientId);
+    return nextClientId;
+  } catch {
+    return createClientId();
+  }
+}
+
 async function sha256(value: string) {
   if (typeof crypto === "undefined" || !crypto.subtle) {
-    let hash = 0;
-    for (let index = 0; index < value.length; index += 1) {
-      hash = (hash << 5) - hash + value.charCodeAt(index);
-      hash |= 0;
-    }
-    return `fallback-${Math.abs(hash).toString(16)}`;
+    return "";
   }
 
   const bytes = new TextEncoder().encode(value);
@@ -22,7 +51,9 @@ export async function getDeviceFingerprint() {
     return "server";
   }
 
+  const clientId = getStoredClientId();
   const fingerprintSource = {
+    clientId,
     userAgent: navigator.userAgent,
     language: navigator.language,
     languages: navigator.languages,
@@ -40,5 +71,6 @@ export async function getDeviceFingerprint() {
     },
   };
 
-  return sha256(JSON.stringify(fingerprintSource));
+  const hashedFingerprint = await sha256(JSON.stringify(fingerprintSource));
+  return hashedFingerprint || `client-${clientId}`;
 }

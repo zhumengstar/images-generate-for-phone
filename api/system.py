@@ -4,7 +4,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict
 
-from api.support import require_admin, require_identity, resolve_image_base_url
+from api.support import extract_bearer_token, ip_fingerprint_identity, require_admin, require_identity, resolve_image_base_url
 from services.config import config
 from services.image_service import delete_images, list_images
 from services.log_service import log_service
@@ -30,14 +30,17 @@ def create_router(app_version: str) -> APIRouter:
     router = APIRouter()
 
     @router.post("/auth/login")
-    async def login(authorization: str | None = Header(default=None)):
-        identity = require_identity(authorization)
+    async def login(request: Request, authorization: str | None = Header(default=None)):
+        token = extract_bearer_token(authorization)
+        identity = require_identity(authorization) if token else ip_fingerprint_identity(request)
         return {
             "ok": True,
             "version": app_version,
             "role": identity.get("role"),
             "subject_id": identity.get("id"),
             "name": identity.get("name"),
+            "ip": identity.get("ip"),
+            "fingerprint": identity.get("fingerprint"),
         }
 
     @router.get("/version")

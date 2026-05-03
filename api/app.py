@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import socket
+import time
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime
+from io import BytesIO
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -17,11 +22,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import accounts, ai, image_tasks, register, system
-from api.support import resolve_web_asset, start_limited_account_watcher
+from api.support import client_public_ip, device_fingerprint, ip_fingerprint_identity, ip_fingerprint_key, resolve_web_asset, start_limited_account_watcher
 from services.config import DATA_DIR, config
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 IP_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20"))
 IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "http://165.154.254.130:3000").rstrip("/")
+IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
+IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
+IMAGE_EDIT_MAX_SIDE = int(os.getenv("IMAGE_PROXY_EDIT_MAX_SIDE", "2048"))
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
 IP_QUOTA_LOCK = Lock()
@@ -33,25 +42,33 @@ def _now_iso() -> str:
 
 
 def _client_ip(request: Request) -> str:
-    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-    if cf_ip:
-        return cf_ip
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-    real_ip = request.headers.get("x-real-ip", "").strip()
-    if real_ip:
-        return real_ip
-    return request.client.host if request.client else "unknown"
+    return client_public_ip(request)
 
 
 def _device_fingerprint(request: Request) -> str:
-    fingerprint = request.headers.get("x-device-fingerprint", "").strip()
-    return fingerprint or "unknown"
+    return device_fingerprint(request)
 
 
 def _quota_key(ip: str, fingerprint: str) -> str:
-    return f"{ip}|{fingerprint}"
+    return ip_fingerprint_key(ip, fingerprint)
+
+
+def _proxy_authorization(request: Request) -> str:
+    proxy_key = str(config.auth_key or "").strip()
+    if proxy_key:
+        return f"Bearer {proxy_key}"
+    return request.headers.get("authorization", "")
+
+
+def _ip_quota_payload(request: Request, ip: str, fingerprint: str) -> dict[str, object]:
+    identity = ip_fingerprint_identity(request)
+    return {
+        "user_id": identity["id"],
+        "ip": ip,
+        "fingerprint": fingerprint,
+        "limit": IP_IMAGE_QUOTA_LIMIT,
+        "remaining": _remaining_ip_quota(ip, fingerprint),
+    }
 
 
 def _load_ip_quotas() -> dict[str, int]:
@@ -110,12 +127,127 @@ def _usable_image_count(data: dict[str, Any]) -> int:
     )
 
 
+def _recall_image_item(item: Any, headers: dict[str, str]) -> Any:
+    if not isinstance(item, dict):
+        return item
+    if item.get("b64_json"):
+        return {**item, "url": ""}
+    if not item.get("url"):
+        return item
+
+    request_headers = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() in {"authorization", "x-device-fingerprint", "x-forwarded-for"}
+    }
+    image_url = urllib.parse.urljoin(f"{IMAGE_PROXY_BASE_URL}/", str(item["url"]))
+    request = urllib.request.Request(image_url, headers=request_headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+            raw = response.read()
+    except Exception:
+        return item
+    return {
+        **item,
+        "b64_json": base64.b64encode(raw).decode("ascii"),
+        "url": "",
+    }
+
+
+def _recall_image_data(data: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    items = data.get("data")
+    if not isinstance(items, list):
+        return data
+    return {
+        **data,
+        "data": [_recall_image_item(item, headers) for item in items],
+    }
+
+
+def _stable_image_count(data: dict[str, Any]) -> int:
+    items = data.get("data")
+    if not isinstance(items, list):
+        return 0
+    return sum(1 for item in items if isinstance(item, dict) and item.get("b64_json"))
+
+
+async def _read_json_object(request: Request) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid json request body"}) from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail={"error": "invalid request body"})
+    return payload
+
+
 def _error_text(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
         return _error_text(value.get("message")) or _error_text(value.get("error")) or _error_text(value.get("detail"))
     return ""
+
+
+def _decode_proxy_body(raw_body: bytes) -> dict[str, Any]:
+    response_body = raw_body.decode("utf-8", errors="replace")
+    try:
+        data = json.loads(response_body or "{}")
+    except Exception:
+        data = {"error": response_body}
+    return data if isinstance(data, dict) else {"error": response_body}
+
+
+def _proxy_error_message(exc: BaseException) -> str:
+    reason = getattr(exc, "reason", None)
+    if reason:
+        return str(reason)
+    return str(exc) or exc.__class__.__name__
+
+
+def _should_retry_proxy_error(status: int) -> bool:
+    return status in {408, 409, 425, 429} or status >= 500
+
+
+def _normalize_edit_image(file_name: str, content_type: str, content: bytes) -> tuple[str, str, bytes]:
+    if not content:
+        raise HTTPException(status_code=400, detail={"error": "image is empty"})
+
+    try:
+        with Image.open(BytesIO(content)) as source_image:
+            image = ImageOps.exif_transpose(source_image)
+            image.load()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(status_code=400, detail={"error": f"image can not be loaded: {exc}"}) from exc
+
+    width, height = image.size
+    max_side = max(width, height)
+    if IMAGE_EDIT_MAX_SIDE > 0 and max_side > IMAGE_EDIT_MAX_SIDE:
+        scale = IMAGE_EDIT_MAX_SIDE / max_side
+        next_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+        image = image.resize(next_size, Image.Resampling.LANCZOS)
+
+    if image.mode not in {"RGB", "RGBA"}:
+        image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    normalized_name = f"{os.path.splitext(file_name or 'image')[0] or 'image'}.png"
+    return normalized_name, "image/png", output.getvalue()
+
+
+async def _read_edit_uploads(image: list[UploadFile]) -> list[tuple[str, str, str, bytes]]:
+    files: list[tuple[str, str, str, bytes]] = []
+    for upload in image:
+        file_name = upload.filename or "image.png"
+        content_type = upload.content_type or "image/png"
+        normalized_name, normalized_type, normalized_content = _normalize_edit_image(
+            file_name,
+            content_type,
+            await upload.read(),
+        )
+        files.append(("image", normalized_name, normalized_type, normalized_content))
+    return files
 
 
 def _public_ip_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -217,6 +349,14 @@ def _run_ip_image_task(
             _refund_ip_quota(ip, fingerprint, count - usable_count)
         if usable_count == 0:
             raise RuntimeError("接口没有返回图片数据")
+        if isinstance(data, dict):
+            data = _recall_image_data(data, headers)
+        stable_count = _stable_image_count(data) if isinstance(data, dict) else 0
+        if stable_count == 0:
+            _refund_ip_quota(ip, fingerprint, usable_count)
+            raise RuntimeError("image completed but image recall failed")
+        if stable_count < usable_count:
+            _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
         _update_ip_task(task_key, status="success", data=data.get("data", []), error="")
     except Exception as exc:
         _update_ip_task(task_key, status="error", data=[], error=str(exc) or "图片生成失败")
@@ -224,23 +364,27 @@ def _run_ip_image_task(
 
 def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        f"{IMAGE_PROXY_BASE_URL}/v1/images/generations",
-        data=body,
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            response_body = response.read().decode("utf-8")
-            return response.status, json.loads(response_body or "{}")
-    except urllib.error.HTTPError as exc:
-        response_body = exc.read().decode("utf-8", errors="replace")
+    for attempt in range(max(1, IMAGE_PROXY_RETRIES + 1)):
+        request = urllib.request.Request(
+            f"{IMAGE_PROXY_BASE_URL}/v1/images/generations",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
         try:
-            data = json.loads(response_body or "{}")
-        except Exception:
-            data = {"error": response_body or str(exc)}
-        return exc.code, data
+            with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+                return response.status, _decode_proxy_body(response.read())
+        except urllib.error.HTTPError as exc:
+            data = _decode_proxy_body(exc.read())
+            if attempt < IMAGE_PROXY_RETRIES and _should_retry_proxy_error(exc.code):
+                time.sleep(1 + attempt)
+                continue
+            return exc.code, data
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+            if attempt < IMAGE_PROXY_RETRIES:
+                time.sleep(1 + attempt)
+                continue
+            return 502, {"error": f"image proxy request failed: {_proxy_error_message(exc)}"}
 
 
 def _build_multipart_body(fields: dict[str, str], files: list[tuple[str, str, str, bytes]]) -> tuple[str, bytes]:
@@ -275,23 +419,27 @@ def _build_multipart_body(fields: dict[str, str], files: list[tuple[str, str, st
 def _proxy_image_edit(fields: dict[str, str], files: list[tuple[str, str, str, bytes]], headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
     content_type, body = _build_multipart_body(fields, files)
     request_headers = {**headers, "Content-Type": content_type}
-    request = urllib.request.Request(
-        f"{IMAGE_PROXY_BASE_URL}/v1/images/edits",
-        data=body,
-        headers=request_headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            response_body = response.read().decode("utf-8")
-            return response.status, json.loads(response_body or "{}")
-    except urllib.error.HTTPError as exc:
-        response_body = exc.read().decode("utf-8", errors="replace")
+    for attempt in range(max(1, IMAGE_PROXY_RETRIES + 1)):
+        request = urllib.request.Request(
+            f"{IMAGE_PROXY_BASE_URL}/v1/images/edits",
+            data=body,
+            headers=request_headers,
+            method="POST",
+        )
         try:
-            data = json.loads(response_body or "{}")
-        except Exception:
-            data = {"error": response_body or str(exc)}
-        return exc.code, data
+            with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+                return response.status, _decode_proxy_body(response.read())
+        except urllib.error.HTTPError as exc:
+            data = _decode_proxy_body(exc.read())
+            if attempt < IMAGE_PROXY_RETRIES and _should_retry_proxy_error(exc.code):
+                time.sleep(1 + attempt)
+                continue
+            return exc.code, data
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+            if attempt < IMAGE_PROXY_RETRIES:
+                time.sleep(1 + attempt)
+                continue
+            return 502, {"error": f"image edit proxy request failed: {_proxy_error_message(exc)}"}
 
 
 def create_app() -> FastAPI:
@@ -328,28 +476,16 @@ def create_app() -> FastAPI:
     async def get_ip_quota(request: Request):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
-        return {
-            "ip": ip,
-            "fingerprint": fingerprint,
-            "limit": IP_IMAGE_QUOTA_LIMIT,
-            "remaining": _remaining_ip_quota(ip, fingerprint),
-        }
+        return _ip_quota_payload(request, ip, fingerprint)
 
     @app.post("/api/ip-limited/quota/refund")
     async def refund_ip_quota(request: Request):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"error": "invalid request body"})
+        payload = await _read_json_object(request)
         count = max(1, min(2, int(payload.get("count") or 1)))
         _refund_ip_quota(ip, fingerprint, count)
-        return {
-            "ip": ip,
-            "fingerprint": fingerprint,
-            "limit": IP_IMAGE_QUOTA_LIMIT,
-            "remaining": _remaining_ip_quota(ip, fingerprint),
-        }
+        return _ip_quota_payload(request, ip, fingerprint)
 
     @app.get("/api/ip-limited/image-tasks")
     async def list_ip_image_tasks(request: Request, ids: str = ""):
@@ -377,9 +513,7 @@ def create_app() -> FastAPI:
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
         owner = _quota_key(ip, fingerprint)
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"error": "invalid request body"})
+        payload = await _read_json_object(request)
         task_id = str(payload.get("client_task_id") or "").strip()
         prompt = str(payload.get("prompt") or "").strip()
         if not task_id:
@@ -420,7 +554,7 @@ def create_app() -> FastAPI:
             generation_payload["size"] = task["size"]
         headers = {
             "Content-Type": "application/json",
-            "Authorization": request.headers.get("authorization", ""),
+            "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
             "X-Forwarded-For": ip,
         }
@@ -466,6 +600,14 @@ def create_app() -> FastAPI:
             existing = items.get(task_key)
             if existing is not None:
                 return _public_ip_task(existing)
+
+        files = await _read_edit_uploads(image)
+
+        with IP_IMAGE_TASKS_LOCK:
+            items = _load_ip_tasks()
+            existing = items.get(task_key)
+            if existing is not None:
+                return _public_ip_task(existing)
             _consume_ip_quota(ip, fingerprint, 1)
             now = _now_iso()
             task = {
@@ -483,10 +625,6 @@ def create_app() -> FastAPI:
             items[task_key] = task
             _save_ip_tasks(items)
 
-        files = [
-            ("image", upload.filename or "image.png", upload.content_type or "image/png", await upload.read())
-            for upload in image
-        ]
         fields = {
             "prompt": prompt,
             "model": model or "gpt-image-2",
@@ -496,7 +634,7 @@ def create_app() -> FastAPI:
         if size:
             fields["size"] = size
         headers = {
-            "Authorization": request.headers.get("authorization", ""),
+            "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
             "X-Forwarded-For": ip,
         }
@@ -521,9 +659,7 @@ def create_app() -> FastAPI:
     async def ip_limited_image_generation(request: Request):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail={"error": "invalid request body"})
+        payload = await _read_json_object(request)
 
         count = max(1, min(2, int(payload.get("n") or 1)))
         payload["n"] = count
@@ -531,7 +667,7 @@ def create_app() -> FastAPI:
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": request.headers.get("authorization", ""),
+            "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
             "X-Forwarded-For": ip,
         }
@@ -545,12 +681,14 @@ def create_app() -> FastAPI:
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片生成失败，接口没有返回图片数据"})
         if isinstance(data, dict):
-            data["ip_quota"] = {
-                "ip": ip,
-                "fingerprint": fingerprint,
-                "limit": IP_IMAGE_QUOTA_LIMIT,
-                "remaining": _remaining_ip_quota(ip, fingerprint),
-            }
+            data = _recall_image_data(data, headers)
+            stable_count = _stable_image_count(data)
+            if stable_count == 0:
+                _refund_ip_quota(ip, fingerprint, usable_count)
+                return JSONResponse(status_code=502, content={"error": "image completed but image recall failed"})
+            if stable_count < usable_count:
+                _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
+            data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 
     @app.post("/api/ip-limited/images/edits")
@@ -571,11 +709,8 @@ def create_app() -> FastAPI:
         if not image:
             raise HTTPException(status_code=400, detail={"error": "image is required"})
 
+        files = await _read_edit_uploads(image)
         _consume_ip_quota(ip, fingerprint, count)
-        files = [
-            ("image", upload.filename or "image.png", upload.content_type or "image/png", await upload.read())
-            for upload in image
-        ]
         fields = {
             "prompt": prompt,
             "model": model or "gpt-image-2",
@@ -585,7 +720,7 @@ def create_app() -> FastAPI:
         if size:
             fields["size"] = size
         headers = {
-            "Authorization": request.headers.get("authorization", ""),
+            "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
             "X-Forwarded-For": ip,
         }
@@ -599,12 +734,14 @@ def create_app() -> FastAPI:
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片编辑失败，接口没有返回图片数据"})
         if isinstance(data, dict):
-            data["ip_quota"] = {
-                "ip": ip,
-                "fingerprint": fingerprint,
-                "limit": IP_IMAGE_QUOTA_LIMIT,
-                "remaining": _remaining_ip_quota(ip, fingerprint),
-            }
+            data = _recall_image_data(data, headers)
+            stable_count = _stable_image_count(data)
+            if stable_count == 0:
+                _refund_ip_quota(ip, fingerprint, usable_count)
+                return JSONResponse(status_code=502, content={"error": "image completed but image recall failed"})
+            if stable_count < usable_count:
+                _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
+            data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 
     @app.get("/{full_path:path}", include_in_schema=False)

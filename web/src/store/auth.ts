@@ -2,8 +2,6 @@
 
 import localforage from "localforage";
 
-import webConfig from "@/constants/common-env";
-
 export type AuthRole = "admin" | "user";
 
 export type StoredAuthSession = {
@@ -37,7 +35,7 @@ function normalizeSession(value: unknown, fallbackKey = ""): StoredAuthSession |
   const candidate = value as Partial<StoredAuthSession>;
   const key = String(candidate.key || fallbackKey || "").trim();
   const role = candidate.role === "admin" || candidate.role === "user" ? candidate.role : null;
-  if (!key || !role) {
+  if (!role) {
     return null;
   }
 
@@ -66,7 +64,7 @@ export async function getStoredAuthKey() {
     await authStorage.setItem(AUTH_KEY_STORAGE_KEY, legacyKey);
     return legacyKey;
   }
-  return String(webConfig.defaultAuthKey || "").trim();
+  return "";
 }
 
 export async function getStoredAuthSession() {
@@ -96,7 +94,7 @@ export async function getStoredAuthSession() {
   if (String(storedKey || "").trim()) {
     await clearStoredAuthSession();
   }
-  const defaultAuthKey = String(webConfig.defaultAuthKey || "").trim();
+  const defaultAuthKey = "";
   if (defaultAuthKey) {
     return {
       key: defaultAuthKey,

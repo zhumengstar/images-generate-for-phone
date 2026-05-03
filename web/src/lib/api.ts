@@ -84,6 +84,7 @@ export type ImageResponse = {
   created: number;
   data: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
   ip_quota?: {
+    user_id?: string;
     ip: string;
     fingerprint: string;
     limit: number;
@@ -92,6 +93,7 @@ export type ImageResponse = {
 };
 
 export type IpQuotaResponse = {
+  user_id?: string;
   ip: string;
   fingerprint: string;
   limit: number;
@@ -121,6 +123,8 @@ export type LoginResponse = {
   role: AuthRole;
   subject_id: string;
   name: string;
+  ip?: string;
+  fingerprint?: string;
 };
 
 export type UserKey = {
@@ -193,7 +197,7 @@ export async function login(authKey: string) {
       device_fingerprint: deviceFingerprint,
     },
     headers: {
-      Authorization: `Bearer ${normalizedAuthKey}`,
+      ...(normalizedAuthKey ? { Authorization: `Bearer ${normalizedAuthKey}` } : {}),
       "X-Device-Fingerprint": deviceFingerprint,
     },
     redirectOnUnauthorized: false,

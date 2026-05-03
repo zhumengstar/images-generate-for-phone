@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -25,6 +25,72 @@ function getStoredImageSrc(image: StoredImage) {
     return `data:image/png;base64,${image.b64_json}`;
   }
   return image.url || "";
+}
+
+function base64ToObjectUrl(base64: string) {
+  const normalized = base64.includes(",") ? base64.split(",", 2)[1] : base64;
+  const byteCharacters = atob(normalized.replace(/\s/g, ""));
+  const chunks: Uint8Array[] = [];
+  for (let offset = 0; offset < byteCharacters.length; offset += 8192) {
+    const slice = byteCharacters.slice(offset, offset + 8192);
+    const bytes = new Uint8Array(slice.length);
+    for (let index = 0; index < slice.length; index += 1) {
+      bytes[index] = slice.charCodeAt(index);
+    }
+    chunks.push(bytes);
+  }
+  return URL.createObjectURL(new Blob(chunks, { type: "image/png" }));
+}
+
+function StoredImageElement({
+  image,
+  fallbackSrc,
+  alt,
+  className,
+  onLoad,
+}: {
+  image: StoredImage;
+  fallbackSrc: string;
+  alt: string;
+  className?: string;
+  onLoad: (width: number, height: number) => void;
+}) {
+  const [objectUrl, setObjectUrl] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setLoadFailed(false);
+    if (!image.b64_json) {
+      setObjectUrl("");
+      return;
+    }
+
+    try {
+      const nextObjectUrl = base64ToObjectUrl(image.b64_json);
+      setObjectUrl(nextObjectUrl);
+      return () => URL.revokeObjectURL(nextObjectUrl);
+    } catch {
+      setObjectUrl("");
+    }
+  }, [image.b64_json]);
+
+  if (loadFailed) {
+    return (
+      <div className="flex min-h-40 w-full items-center justify-center bg-stone-100 px-4 py-8 text-center text-sm text-stone-500">
+        Load failed
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={objectUrl || fallbackSrc}
+      alt={alt}
+      className={className}
+      onLoad={(event) => onLoad(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)}
+      onError={() => setLoadFailed(true)}
+    />
+  );
 }
 
 export function ImageResults({
@@ -162,15 +228,16 @@ export function ImageResults({
                             onClick={() => onOpenLightbox(successfulTurnImages, currentIndex)}
                             className="group block w-full cursor-zoom-in"
                           >
-                            <img
-                              src={imageSrc}
+                            <StoredImageElement
+                              image={image}
+                              fallbackSrc={imageSrc}
                               alt={`Generated result ${index + 1}`}
                               className="block h-auto w-full transition duration-200 group-hover:brightness-90"
-                              onLoad={(event) => {
+                              onLoad={(width, height) => {
                                 updateImageDimensions(
                                   image.id,
-                                  event.currentTarget.naturalWidth,
-                                  event.currentTarget.naturalHeight,
+                                  width,
+                                  height,
                                 );
                               }}
                             />

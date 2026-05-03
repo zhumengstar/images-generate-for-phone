@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { login } from "@/lib/api";
 import {
   getDefaultRouteForRole,
   getStoredAuthSession,
+  setStoredAuthSession,
   type AuthRole,
   type StoredAuthSession,
 } from "@/store/auth";
@@ -31,20 +33,39 @@ export function useAuthGuard(allowedRoles?: AuthRole[]): UseAuthGuardResult {
         return;
       }
 
-      if (!storedSession) {
+      let session = storedSession;
+      if (!session) {
+        try {
+          const data = await login("");
+          session = {
+            key: "",
+            role: data.role,
+            subjectId: data.subject_id,
+            name: data.name,
+          };
+          await setStoredAuthSession(session);
+        } catch {
+          session = null;
+        }
+      }
+      if (!active) {
+        return;
+      }
+
+      if (!session) {
         setSession(null);
         setIsCheckingAuth(false);
         return;
       }
 
-      if (roleList.length > 0 && !roleList.includes(storedSession.role)) {
-        setSession(storedSession);
+      if (roleList.length > 0 && !roleList.includes(session.role)) {
+        setSession(session);
         setIsCheckingAuth(false);
-        router.replace(getDefaultRouteForRole(storedSession.role));
+        router.replace(getDefaultRouteForRole(session.role));
         return;
       }
 
-      setSession(storedSession);
+      setSession(session);
       setIsCheckingAuth(false);
     };
 

@@ -875,20 +875,27 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             const taskId = image.taskId || image.id;
             let effectiveTaskId = taskId;
             try {
-              const editFiles =
-                activeTurn.mode === "edit"
-                  ? activeTurn.referenceImages.map((referenceImage, referenceIndex) =>
+              const existingTaskList = image.taskId ? await fetchImageTasks([taskId]).catch(() => null) : null;
+              const existingTask = existingTaskList?.items.find((item) => item.id === taskId);
+              const submittedTask = await (
+                existingTask ??
+                (async () => {
+                  if (activeTurn.mode === "edit") {
+                    const editFiles = activeTurn.referenceImages.map((referenceImage, referenceIndex) =>
                       dataUrlToFile(
                         referenceImage.dataUrl,
                         referenceImage.name || `reference-${referenceIndex + 1}.png`,
                         referenceImage.type,
                       ),
-                    )
-                  : [];
-              const submittedTask =
-                activeTurn.mode === "edit" && editFiles.length > 0
-                  ? await createImageEditTask(taskId, editFiles, activeTurn.prompt, activeTurn.model, activeTurn.size)
-                  : await createImageGenerationTask(taskId, activeTurn.prompt, activeTurn.model, activeTurn.size);
+                    );
+                    if (editFiles.length === 0) {
+                      throw new Error("缂栬緫浠诲姟缂哄皯鍙傝€冨浘锛岃閲嶆柊涓婁紶鍥剧墖");
+                    }
+                    return createImageEditTask(taskId, editFiles, activeTurn.prompt, activeTurn.model, activeTurn.size);
+                  }
+                  return createImageGenerationTask(taskId, activeTurn.prompt, activeTurn.model, activeTurn.size);
+                })()
+              );
               const returnedTaskId = submittedTask.id || taskId;
               effectiveTaskId = returnedTaskId;
               if (returnedTaskId !== image.taskId) {
@@ -1134,6 +1141,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
         <div className="flex min-h-0 flex-col gap-2 sm:gap-4">
           <div className="flex flex-wrap gap-1.5 rounded-2xl border border-stone-200/70 bg-white/85 px-2 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:gap-2 sm:px-4 sm:text-xs">
+            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
+              <span className="shrink-0 font-medium text-stone-700">User</span>
+              <span className="min-w-0 truncate font-mono">{ipQuota?.user_id || "--"}</span>
+            </span>
             <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
               <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
               <span className="min-w-0 truncate font-mono">{ipQuota?.ip || "读取中"}</span>

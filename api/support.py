@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from threading import Event, Thread
 
@@ -25,6 +26,41 @@ def _legacy_admin_identity(token: str) -> dict[str, object] | None:
     if auth_key and token == auth_key:
         return {"id": "admin", "name": "管理员", "role": "admin"}
     return None
+
+
+def client_public_ip(request: Request) -> str:
+    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+    if cf_ip:
+        return cf_ip
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "unknown"
+
+
+def device_fingerprint(request: Request) -> str:
+    fingerprint = request.headers.get("x-device-fingerprint", "").strip()
+    return fingerprint or "unknown"
+
+
+def ip_fingerprint_key(ip: str, fingerprint: str) -> str:
+    return f"{ip}|{fingerprint}"
+
+
+def ip_fingerprint_identity(request: Request) -> dict[str, object]:
+    ip = client_public_ip(request)
+    fingerprint = device_fingerprint(request)
+    subject_hash = hashlib.sha256(ip_fingerprint_key(ip, fingerprint).encode("utf-8")).hexdigest()[:16]
+    return {
+        "id": f"user-{subject_hash}",
+        "name": f"用户 {subject_hash[:6]}",
+        "role": "user",
+        "ip": ip,
+        "fingerprint": fingerprint,
+    }
 
 
 def require_identity(authorization: str | None) -> dict[str, object]:
