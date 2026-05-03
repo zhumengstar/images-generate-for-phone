@@ -155,6 +155,27 @@ export type RegisterConfig = {
   }>;
 };
 
+const DEVICE_ID_STORAGE_KEY = "chatgpt2api:image_device_id";
+
+export function getDeviceId() {
+  if (typeof window === "undefined") {
+    return "server";
+  }
+
+  const stored = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+  if (stored) {
+    return stored;
+  }
+
+  const randomId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const deviceId = `device-${randomId}`;
+  window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, deviceId);
+  return deviceId;
+}
+
 export async function login(authKey: string) {
   const normalizedAuthKey = String(authKey || "").trim();
   return httpRequest<LoginResponse>("/auth/login", {
@@ -209,7 +230,7 @@ export async function updateAccount(
   });
 }
 
-export async function generateImage(prompt: string, model?: ImageModel, size?: string) {
+export async function generateImage(prompt: string, model?: ImageModel, size?: string, deviceId = getDeviceId()) {
   return httpRequest<ImageResponse>(
     "/v1/images/generations",
     {
@@ -220,6 +241,11 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
         ...(size ? { size } : {}),
         n: 1,
         response_format: "b64_json",
+        user: deviceId,
+        client_device_id: deviceId,
+      },
+      headers: {
+        "X-Device-Id": deviceId,
       },
     },
   );

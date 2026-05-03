@@ -8,13 +8,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import webConfig from "@/constants/common-env";
 import { login } from "@/lib/api";
 import { useRedirectIfAuthenticated } from "@/lib/use-auth-guard";
 import { getDefaultRouteForRole, setStoredAuthSession } from "@/store/auth";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [authKey, setAuthKey] = useState("");
+  const [authKey, setAuthKey] = useState(webConfig.defaultAuthKey);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { isCheckingAuth } = useRedirectIfAuthenticated();
 

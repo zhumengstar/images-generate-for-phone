@@ -1,9 +1,7 @@
 "use client";
-import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type RefObject } from "react";
+import { ArrowUp, Check, ChevronDown, LoaderCircle } from "lucide-react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
-import { ImageLightbox } from "@/components/image-lightbox";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -14,16 +12,11 @@ type ImageComposerProps = {
   imageSize: string;
   availableQuota: string;
   activeTaskCount: number;
-  referenceImages: Array<{ name: string; dataUrl: string }>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
   onImageCountChange: (value: string) => void;
   onImageSizeChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
-  onPickReferenceImage: () => void;
-  onReferenceImageChange: (files: File[]) => void | Promise<void>;
-  onRemoveReferenceImage: (index: number) => void;
 };
 
 export function ImageComposer({
@@ -32,25 +25,14 @@ export function ImageComposer({
   imageSize,
   availableQuota,
   activeTaskCount,
-  referenceImages,
   textareaRef,
-  fileInputRef,
   onPromptChange,
   onImageCountChange,
   onImageSizeChange,
   onSubmit,
-  onPickReferenceImage,
-  onReferenceImageChange,
-  onRemoveReferenceImage,
 }: ImageComposerProps) {
-  const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [lightboxIndex, setLightboxIndex] = useState(0);
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
   const sizeMenuRef = useRef<HTMLDivElement>(null);
-  const lightboxImages = useMemo(
-    () => referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.dataUrl })),
-    [referenceImages],
-  );
   const imageSizeOptions = [
     { value: "", label: "未指定" },
     { value: "1:1", label: "1:1 (正方形)" },
@@ -76,65 +58,9 @@ export function ImageComposer({
     };
   }, [isSizeMenuOpen]);
 
-  const handleTextareaPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageFiles = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    void onReferenceImageChange(imageFiles);
-  };
-
   return (
     <div className="shrink-0 flex justify-center px-1 sm:px-0">
       <div style={{ width: "min(980px, 100%)" }}>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={(event) => {
-            void onReferenceImageChange(Array.from(event.target.files || []));
-          }}
-        />
-
-        {referenceImages.length > 0 ? (
-          <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1 sm:mb-3 sm:flex-wrap sm:overflow-visible sm:pb-0">
-            {referenceImages.map((image, index) => (
-              <div key={`${image.name}-${index}`} className="relative size-14 shrink-0 sm:size-16">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLightboxIndex(index);
-                    setLightboxOpen(true);
-                  }}
-                  className="group size-14 overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 transition hover:border-stone-300 sm:size-16"
-                  aria-label={`预览参考图 ${image.name || index + 1}`}
-                >
-                  <img
-                    src={image.dataUrl}
-                    alt={image.name || `参考图 ${index + 1}`}
-                    className="h-full w-full object-cover"
-                  />
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRemoveReferenceImage(index);
-                  }}
-                  className="absolute -right-1 -top-1 inline-flex size-5 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-800"
-                  aria-label={`移除参考图 ${image.name || index + 1}`}
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-
         <div className="rounded-[24px] border border-stone-200 bg-white shadow-[0_14px_60px_-42px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:shadow-none">
           <div
             className="relative cursor-text"
@@ -142,23 +68,11 @@ export function ImageComposer({
               textareaRef.current?.focus();
             }}
           >
-            <ImageLightbox
-              images={lightboxImages}
-              currentIndex={lightboxIndex}
-              open={lightboxOpen}
-              onOpenChange={setLightboxOpen}
-              onIndexChange={setLightboxIndex}
-            />
             <Textarea
               ref={textareaRef}
               value={prompt}
               onChange={(event) => onPromptChange(event.target.value)}
-              onPaste={handleTextareaPaste}
-              placeholder={
-                referenceImages.length > 0
-                  ? "描述你希望如何修改参考图"
-                  : "输入你想要生成的画面，也可直接粘贴图片"
-              }
+              placeholder="输入你想要生成的画面"
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -171,15 +85,6 @@ export function ImageComposer({
             <div className="border-t border-stone-100 bg-white px-3 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-end justify-between gap-2 sm:gap-3">
                 <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 shrink-0 rounded-full border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none sm:h-10 sm:px-4 sm:text-sm"
-                    onClick={onPickReferenceImage}
-                  >
-                    <ImagePlus className="size-3.5 sm:size-4" />
-                    <span>{referenceImages.length > 0 ? "添加参考图" : "上传"}</span>
-                  </Button>
                   <div className="shrink-0 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
                     <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
                   </div>
@@ -195,7 +100,7 @@ export function ImageComposer({
                       type="number"
                       inputMode="numeric"
                       min="1"
-                      max="100"
+                      max="2"
                       step="1"
                       value={imageCount}
                       onChange={(event) => onImageCountChange(event.target.value)}
@@ -248,7 +153,7 @@ export function ImageComposer({
                   onClick={() => void onSubmit()}
                   disabled={!prompt.trim()}
                   className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-stone-950 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 sm:size-11"
-                  aria-label={referenceImages.length > 0 ? "编辑图片" : "生成图片"}
+                  aria-label="生成图片"
                 >
                   <ArrowUp className="size-3.5 sm:size-4" />
                 </button>

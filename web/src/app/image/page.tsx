@@ -18,11 +18,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
-  createImageEditTask,
-  createImageGenerationTask,
   fetchAccounts,
   fetchImageTasks,
+  generateImage,
+  getDeviceId,
   type Account,
+  type ImageResponse,
   type ImageTask,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -46,7 +47,7 @@ const IMAGE_SIZE_STORAGE_KEY = "chatgpt2api:image_last_size";
 const IMAGE_COUNT_STORAGE_KEY = "chatgpt2api:image_last_count";
 
 function clampImageCount(value: string) {
-  return String(Math.min(100, Math.max(1, Math.floor(Number(value) || 1))));
+  return String(Math.min(2, Math.max(1, Math.floor(Number(value) || 1))));
 }
 const activeConversationQueueIds = new Set<string>();
 
@@ -122,6 +123,37 @@ async function fetchImageAsFile(url: string, fileName: string) {
   }
   const blob = await response.blob();
   return new File([blob], fileName, { type: blob.type || "image/png" });
+}
+
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      resolve(dataUrl.split(",", 2)[1] || "");
+    };
+    reader.onerror = () => reject(new Error("读取图片数据失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function recallImageResult(image: ImageResponse["data"][number]) {
+  if (image.b64_json) {
+    return image;
+  }
+  if (!image.url) {
+    throw new Error("接口没有返回图片数据");
+  }
+
+  const response = await fetch(image.url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("图片召回失败");
+  }
+  const blob = await response.blob();
+  return {
+    ...image,
+    b64_json: await blobToBase64(blob),
+  };
 }
 
 async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
@@ -710,34 +742,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       }
 
       activeConversationQueueIds.add(conversationId);
-      const applyTasks = async (tasks: ImageTask[]) => {
-        const taskMap = new Map(tasks.map((task) => [task.id, task]));
-        await updateConversation(conversationId, (current) => {
-          const conversation = current ?? snapshot;
-          const turns = conversation.turns.map((turn) => {
-            if (turn.id !== activeTurn.id) {
-              return turn;
-            }
-            const images = turn.images.map((image) => {
-              const taskId = image.taskId || image.id;
-              const task = taskMap.get(taskId);
-              return task ? taskDataToStoredImage({ ...image, taskId }, task) : image;
-            });
-            const derived = deriveTurnStatus({ ...turn, status: "generating", images });
-            return {
-              ...turn,
-              ...derived,
-              images,
-            };
-          });
-          return {
-            ...conversation,
-            updatedAt: new Date().toISOString(),
-            turns,
-          };
-        });
-      };
-
       try {
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
@@ -759,54 +763,70 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           };
         });
 
-        const referenceFiles = activeTurn.referenceImages.map((image, index) =>
-          dataUrlToFile(image.dataUrl, image.name || `${activeTurn.id}-${index + 1}.png`, image.type),
-        );
-        if (activeTurn.mode === "edit" && referenceFiles.length === 0) {
-          throw new Error("未找到可用于继续编辑的参考图");
-        }
-
+        const deviceId = getDeviceId();
         const pendingImages = activeTurn.images.filter((image) => image.status === "loading");
-        const submitted = await Promise.all(
-          pendingImages.map((image) => {
+        const updateGeneratedImage = async (generatedImage: StoredImage) => {
+          await updateConversation(conversationId, (current) => {
+            const conversation = current ?? snapshot;
+            const turns = conversation.turns.map((turn) => {
+              if (turn.id !== activeTurn.id) {
+                return turn;
+              }
+              const images = turn.images.map((image) => (image.id === generatedImage.id ? generatedImage : image));
+              const derived = deriveTurnStatus({ ...turn, status: "generating", images });
+              return {
+                ...turn,
+                ...derived,
+                images,
+              };
+            });
+            return {
+              ...conversation,
+              updatedAt: new Date().toISOString(),
+              turns,
+            };
+          });
+        };
+        const generatedImages = await Promise.all(
+          pendingImages.map(async (image) => {
             const taskId = image.taskId || image.id;
-            return activeTurn.mode === "edit"
-              ? createImageEditTask(taskId, referenceFiles, activeTurn.prompt, activeTurn.model, activeTurn.size)
-              : createImageGenerationTask(taskId, activeTurn.prompt, activeTurn.model, activeTurn.size);
+            try {
+              const response = await generateImage(activeTurn.prompt, activeTurn.model, activeTurn.size, deviceId);
+              const first = response.data?.[0] ? await recallImageResult(response.data[0]) : undefined;
+              if (!first?.b64_json && !first?.url) {
+                throw new Error("接口没有返回图片数据");
+              }
+              const generatedImage = {
+                ...image,
+                taskId,
+                status: "success" as const,
+                b64_json: first.b64_json,
+                url: undefined,
+                revised_prompt: first.revised_prompt,
+                error: undefined,
+              };
+              await updateGeneratedImage(generatedImage);
+              return generatedImage;
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "生成图片失败";
+              const generatedImage = {
+                ...image,
+                taskId,
+                status: "error" as const,
+                error: message,
+              };
+              await updateGeneratedImage(generatedImage);
+              return generatedImage;
+            }
           }),
         );
-        await applyTasks(submitted);
 
-        while (true) {
-          const latestConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId);
-          const latestTurn = latestConversation?.turns.find((turn) => turn.id === activeTurn.id);
-          const loadingTaskIds =
-            latestTurn?.images.flatMap((image) =>
-              image.status === "loading" && image.taskId ? [image.taskId] : [],
-            ) || [];
-          if (loadingTaskIds.length === 0) {
-            break;
-          }
-
-          await sleep(2000);
-          const taskList = await fetchImageTasks(loadingTaskIds);
-          if (taskList.items.length > 0) {
-            await applyTasks(taskList.items);
-          }
-          if (taskList.missing_ids.length > 0 && latestTurn) {
-            const missingImages = latestTurn.images.filter(
-              (image) => image.status === "loading" && image.taskId && taskList.missing_ids.includes(image.taskId),
-            );
-            const resubmitted = await Promise.all(
-              missingImages.map((image) =>
-                activeTurn.mode === "edit"
-                  ? createImageEditTask(image.taskId || image.id, referenceFiles, activeTurn.prompt, activeTurn.model, activeTurn.size)
-                  : createImageGenerationTask(image.taskId || image.id, activeTurn.prompt, activeTurn.model, activeTurn.size),
-              ),
-            );
-            if (resubmitted.length > 0) {
-              await applyTasks(resubmitted);
-            }
+        const failedCount = generatedImages.filter((image) => image.status === "error").length;
+        if (failedCount > 0) {
+          if (failedCount === generatedImages.length) {
+            toast.error(generatedImages[0]?.error || "生成图片失败");
+          } else {
+            toast.error(`有 ${failedCount} 张图片生成失败`);
           }
         }
 
@@ -875,7 +895,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    const effectiveImageMode: ImageConversationMode = referenceImageFiles.length > 0 ? "edit" : "generate";
+    const effectiveImageMode: ImageConversationMode = "generate";
 
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
@@ -888,7 +908,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       prompt,
       model: "gpt-image-2",
       mode: effectiveImageMode,
-      referenceImages: effectiveImageMode === "edit" ? referenceImages : [],
+      referenceImages: [],
       count: parsedCount,
       size: imageSize,
       images: Array.from({ length: parsedCount }, (_, index) => {
@@ -1013,7 +1033,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <ImageResults
               selectedConversation={selectedConversation}
               onOpenLightbox={openLightbox}
-              onContinueEdit={handleContinueEdit}
               formatConversationTime={formatConversationTime}
             />
           </div>
@@ -1024,16 +1043,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             imageSize={imageSize}
             availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
-            referenceImages={referenceImages}
             textareaRef={textareaRef}
-            fileInputRef={fileInputRef}
             onPromptChange={setImagePrompt}
             onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
             onImageSizeChange={setImageSize}
             onSubmit={handleSubmit}
-            onPickReferenceImage={() => fileInputRef.current?.click()}
-            onReferenceImageChange={handleReferenceImageChange}
-            onRemoveReferenceImage={handleRemoveReferenceImage}
           />
         </div>
       </section>
