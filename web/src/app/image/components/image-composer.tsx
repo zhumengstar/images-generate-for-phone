@@ -1,6 +1,6 @@
 "use client";
 import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +47,7 @@ export function ImageComposer({
   onSubmit,
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
+  const [sizeMenuStyle, setSizeMenuStyle] = useState<CSSProperties>({});
   const sizeMenuRef = useRef<HTMLDivElement>(null);
   const imageSizeOptions = [
     { value: "", label: "未指定" },
@@ -68,14 +69,32 @@ export function ImageComposer({
     if (!isSizeMenuOpen) {
       return;
     }
+    const updateMenuPosition = () => {
+      const rect = sizeMenuRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      const menuWidth = window.innerWidth < 640 ? window.innerWidth - 32 : 220;
+      const left = window.innerWidth < 640 ? 16 : Math.max(12, Math.min(rect.left, window.innerWidth - menuWidth - 12));
+      setSizeMenuStyle({
+        left,
+        width: menuWidth,
+        bottom: Math.max(12, window.innerHeight - rect.top + 10),
+      });
+    };
     const handlePointerDown = (event: MouseEvent) => {
       if (!sizeMenuRef.current?.contains(event.target as Node)) {
         setIsSizeMenuOpen(false);
       }
     };
+    updateMenuPosition();
     window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
     };
   }, [isSizeMenuOpen]);
 
@@ -211,7 +230,10 @@ export function ImageComposer({
                       <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
                     </button>
                     {isSizeMenuOpen ? (
-                      <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] z-[80] max-h-[45dvh] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)] sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+10px)] sm:left-0 sm:w-[186px]">
+                      <div
+                        className="fixed z-[100] max-h-[45dvh] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
+                        style={sizeMenuStyle}
+                      >
                         {imageSizeOptions.map((option) => {
                           const active = option.value === imageSize;
                           return (
