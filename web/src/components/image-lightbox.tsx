@@ -73,6 +73,7 @@ export function ImageLightbox({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <DialogPrimitive.Content
           className="fixed inset-0 z-50 flex items-center justify-center outline-none"
+          onClick={() => onOpenChange(false)}
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           <DialogPrimitive.Title className="sr-only">
@@ -80,7 +81,7 @@ export function ImageLightbox({
           </DialogPrimitive.Title>
 
           {/* toolbar */}
-          <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+          <div className="absolute top-4 right-4 z-10 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
             {current.sizeLabel || current.dimensions ? (
               <span className="rounded-full bg-black/50 px-3 py-1.5 text-xs font-medium text-white/90">
                 {[current.sizeLabel, current.dimensions].filter(Boolean).join(" · ")}
@@ -109,7 +110,10 @@ export function ImageLightbox({
           {hasPrev && (
             <button
               type="button"
-              onClick={goPrev}
+              onClick={(event) => {
+                event.stopPropagation();
+                goPrev();
+              }}
               className="absolute left-4 z-10 inline-flex size-10 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
               aria-label="上一张"
             >
@@ -120,7 +124,6 @@ export function ImageLightbox({
           {/* image */}
           <div
             className="flex max-h-[90vh] max-w-[90vw] items-center justify-center"
-            onClick={() => onOpenChange(false)}
           >
             <img
               src={current.src}
@@ -135,7 +138,10 @@ export function ImageLightbox({
           {hasNext && (
             <button
               type="button"
-              onClick={goNext}
+              onClick={(event) => {
+                event.stopPropagation();
+                goNext();
+              }}
               className="absolute right-4 z-10 inline-flex size-10 items-center justify-center rounded-full bg-black/40 text-white/90 transition hover:bg-black/60"
               aria-label="下一张"
             >
