@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -706,6 +707,7 @@ def create_app() -> FastAPI:
             thread.join(timeout=1)
 
     app = FastAPI(title="images-generate", version=app_version, lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

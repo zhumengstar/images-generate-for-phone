@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { login } from "@/lib/api";
 import {
   getDefaultRouteForRole,
+  getSyncStoredAuthSession,
   getStoredAuthSession,
   setStoredAuthSession,
   type AuthRole,
@@ -28,7 +29,12 @@ export function useAuthGuard(allowedRoles?: AuthRole[]): UseAuthGuardResult {
 
     const load = async () => {
       const roleList = allowedRolesKey ? (allowedRolesKey.split(",") as AuthRole[]) : [];
-      const storedSession = await getStoredAuthSession();
+      const syncSession = getSyncStoredAuthSession();
+      if (syncSession) {
+        setSession(syncSession);
+        setIsCheckingAuth(false);
+      }
+      const storedSession = syncSession || (await getStoredAuthSession());
       if (!active) {
         return;
       }
