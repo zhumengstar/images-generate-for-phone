@@ -1142,6 +1142,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         <div className="flex h-full min-h-0 flex-col overflow-hidden sm:gap-4">
           <div className="shrink-0 bg-stone-50 sm:bg-transparent">
             <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
+                <span className="font-medium">剩余额度</span>
+                <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
+              </span>
               <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
                 <span className="shrink-0 font-medium text-stone-700">User</span>
                 <span className="min-w-0 truncate font-mono">{ipQuota?.user_id || "--"}</span>
@@ -1153,10 +1157,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               <span className="hidden max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:inline-flex">
                 <span className="shrink-0 font-medium text-stone-700">指纹</span>
                 <span className="min-w-0 truncate font-mono">{ipQuota?.fingerprint.slice(0, 12) || "--"}</span>
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
-                <span className="font-medium">剩余额度</span>
-                <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
               </span>
             </div>
 
