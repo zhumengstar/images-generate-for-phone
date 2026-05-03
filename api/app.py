@@ -35,6 +35,8 @@ IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
 IP_QUOTA_LOCK = Lock()
 IP_IMAGE_TASKS_LOCK = Lock()
+ACTIVE_IP_TASK_LOCK = Lock()
+ACTIVE_IP_TASKS: set[str] = set()
 
 
 def _now_iso() -> str:
@@ -267,6 +269,40 @@ def _public_ip_task(task: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _encode_task_files(files: list[tuple[str, str, str, bytes]]) -> list[dict[str, str]]:
+    return [
+        {
+            "field_name": field_name,
+            "file_name": file_name,
+            "content_type": content_type,
+            "content_b64": base64.b64encode(content).decode("ascii"),
+        }
+        for field_name, file_name, content_type, content in files
+    ]
+
+
+def _decode_task_files(items: Any) -> list[tuple[str, str, str, bytes]]:
+    if not isinstance(items, list):
+        return []
+    files: list[tuple[str, str, str, bytes]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            content = base64.b64decode(str(item.get("content_b64") or ""), validate=True)
+        except Exception:
+            continue
+        files.append(
+            (
+                str(item.get("field_name") or "image"),
+                str(item.get("file_name") or "image.png"),
+                str(item.get("content_type") or "image/png"),
+                content,
+            )
+        )
+    return files
+
+
 def _load_ip_tasks() -> dict[str, dict[str, Any]]:
     try:
         data = json.loads(IP_IMAGE_TASKS_PATH.read_text(encoding="utf-8"))
@@ -289,6 +325,8 @@ def _load_ip_tasks() -> dict[str, dict[str, Any]]:
         items[f"{owner}:{task_id}"] = {
             "id": task_id,
             "owner": owner,
+            "ip": str(task.get("ip") or "").strip(),
+            "fingerprint": str(task.get("fingerprint") or "").strip(),
             "status": status,
             "mode": "edit" if task.get("mode") == "edit" else "generate",
             "model": str(task.get("model") or "gpt-image-2").strip(),
@@ -297,6 +335,7 @@ def _load_ip_tasks() -> dict[str, dict[str, Any]]:
             "updated_at": str(task.get("updated_at") or _now_iso()),
             "data": task.get("data") if isinstance(task.get("data"), list) else None,
             "error": str(task.get("error") or "").strip(),
+            "work": task.get("work") if isinstance(task.get("work"), dict) else None,
         }
     return items
 
@@ -320,6 +359,67 @@ def _update_ip_task(task_key: str, **updates: Any) -> None:
         task["updated_at"] = _now_iso()
         items[task_key] = task
         _save_ip_tasks(items)
+
+
+def _normalize_task_headers(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(item) for key, item in value.items() if item is not None}
+
+
+def _normalize_task_fields(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(item) for key, item in value.items() if item is not None}
+
+
+def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
+    work = task.get("work") if isinstance(task.get("work"), dict) else {}
+    try:
+        _run_ip_image_task(
+            task_key,
+            ip=str(task.get("ip") or "").strip(),
+            fingerprint=str(task.get("fingerprint") or "").strip(),
+            count=max(1, int(work.get("count") or 1)),
+            mode=str(task.get("mode") or "generate"),
+            payload=work.get("payload") if isinstance(work.get("payload"), dict) else None,
+            fields=_normalize_task_fields(work.get("fields")),
+            files=_decode_task_files(work.get("files")),
+            headers=_normalize_task_headers(work.get("headers")),
+        )
+    finally:
+        with ACTIVE_IP_TASK_LOCK:
+            ACTIVE_IP_TASKS.discard(task_key)
+
+
+def _ensure_ip_task_worker(task_key: str, task: dict[str, Any]) -> bool:
+    if task.get("status") not in {"queued", "running"}:
+        return False
+    if not isinstance(task.get("work"), dict):
+        return False
+    with ACTIVE_IP_TASK_LOCK:
+        if task_key in ACTIVE_IP_TASKS:
+            return False
+        ACTIVE_IP_TASKS.add(task_key)
+    Thread(
+        target=_run_tracked_ip_image_task,
+        args=(task_key, dict(task)),
+        daemon=True,
+        name=f"ip-image-task-{str(task.get('id') or '')[:16]}",
+    ).start()
+    return True
+
+
+def _resume_ip_image_tasks() -> None:
+    with IP_IMAGE_TASKS_LOCK:
+        items = _load_ip_tasks()
+        resumable = [
+            (task_key, task)
+            for task_key, task in items.items()
+            if task.get("status") in {"queued", "running"} and isinstance(task.get("work"), dict)
+        ]
+    for task_key, task in resumable:
+        _ensure_ip_task_worker(task_key, task)
 
 
 def _run_ip_image_task(
@@ -357,9 +457,9 @@ def _run_ip_image_task(
             raise RuntimeError("image completed but image recall failed")
         if stable_count < usable_count:
             _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
-        _update_ip_task(task_key, status="success", data=data.get("data", []), error="")
+        _update_ip_task(task_key, status="success", data=data.get("data", []), error="", work=None)
     except Exception as exc:
-        _update_ip_task(task_key, status="error", data=[], error=str(exc) or "图片生成失败")
+        _update_ip_task(task_key, status="error", data=[], error=str(exc) or "图片生成失败", work=None)
 
 
 def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
@@ -450,6 +550,7 @@ def create_app() -> FastAPI:
         stop_event = Event()
         thread = start_limited_account_watcher(stop_event)
         config.cleanup_old_images()
+        _resume_ip_image_tasks()
         try:
             yield
         finally:
@@ -493,19 +594,26 @@ def create_app() -> FastAPI:
         fingerprint = _device_fingerprint(request)
         owner = _quota_key(ip, fingerprint)
         requested_ids = [item.strip() for item in ids.split(",") if item.strip()]
+        tasks_to_ensure: list[tuple[str, dict[str, Any]]] = []
         with IP_IMAGE_TASKS_LOCK:
             items = _load_ip_tasks()
             tasks = []
             missing_ids = []
             for task_id in requested_ids:
-                task = items.get(f"{owner}:{task_id}")
+                task_key = f"{owner}:{task_id}"
+                task = items.get(task_key)
                 if task is None:
                     missing_ids.append(task_id)
                 else:
+                    tasks_to_ensure.append((task_key, task))
                     tasks.append(_public_ip_task(task))
             if not requested_ids:
-                tasks = [_public_ip_task(task) for task in items.values() if task.get("owner") == owner]
+                owner_tasks = [(key, task) for key, task in items.items() if task.get("owner") == owner]
+                tasks_to_ensure.extend(owner_tasks)
+                tasks = [_public_ip_task(task) for _, task in owner_tasks]
                 tasks.sort(key=lambda task: str(task.get("updated_at") or ""), reverse=True)
+        for task_key, task in tasks_to_ensure:
+            _ensure_ip_task_worker(task_key, task)
         return {"items": tasks, "missing_ids": missing_ids}
 
     @app.post("/api/ip-limited/image-tasks/generations")
@@ -522,56 +630,69 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail={"error": "prompt is required"})
 
         task_key = f"{owner}:{task_id}"
-        with IP_IMAGE_TASKS_LOCK:
-            items = _load_ip_tasks()
-            existing = items.get(task_key)
-            if existing is not None:
-                return _public_ip_task(existing)
-            _consume_ip_quota(ip, fingerprint, 1)
-            now = _now_iso()
-            task = {
-                "id": task_id,
-                "owner": owner,
-                "status": "queued",
-                "mode": "generate",
-                "model": str(payload.get("model") or "gpt-image-2"),
-                "size": str(payload.get("size") or ""),
-                "created_at": now,
-                "updated_at": now,
-                "data": None,
-                "error": "",
-            }
-            items[task_key] = task
-            _save_ip_tasks(items)
-
+        task_model = str(payload.get("model") or "gpt-image-2")
+        task_size = str(payload.get("size") or "")
         generation_payload = {
             "prompt": prompt,
-            "model": task["model"],
+            "model": task_model,
             "n": 1,
             "response_format": "b64_json",
         }
-        if task["size"]:
-            generation_payload["size"] = task["size"]
+        if task_size:
+            generation_payload["size"] = task_size
         headers = {
             "Content-Type": "application/json",
             "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
             "X-Forwarded-For": ip,
         }
-        Thread(
-            target=_run_ip_image_task,
-            kwargs={
-                "task_key": task_key,
+        with IP_IMAGE_TASKS_LOCK:
+            items = _load_ip_tasks()
+            existing = items.get(task_key)
+            if existing is not None:
+                if existing.get("status") in {"queued", "running"} and not isinstance(existing.get("work"), dict):
+                    existing.update(
+                        {
+                            "ip": ip,
+                            "fingerprint": fingerprint,
+                            "model": task_model,
+                            "size": task_size,
+                            "work": {
+                                "count": 1,
+                                "payload": generation_payload,
+                                "headers": headers,
+                            },
+                        }
+                    )
+                    items[task_key] = existing
+                    _save_ip_tasks(items)
+                _ensure_ip_task_worker(task_key, existing)
+                return _public_ip_task(existing)
+            _consume_ip_quota(ip, fingerprint, 1)
+            now = _now_iso()
+            task = {
+                "id": task_id,
+                "owner": owner,
                 "ip": ip,
                 "fingerprint": fingerprint,
-                "count": 1,
+                "status": "queued",
                 "mode": "generate",
-                "payload": generation_payload,
-                "headers": headers,
-            },
-            daemon=True,
-            name=f"ip-image-task-{task_id[:16]}",
-        ).start()
+                "model": task_model,
+                "size": task_size,
+                "created_at": now,
+                "updated_at": now,
+                "data": None,
+                "error": "",
+                "work": {
+                    "count": 1,
+                    "payload": generation_payload,
+                    "headers": headers,
+                },
+            }
+            items[task_key] = task
+            _save_ip_tasks(items)
+
+        _ensure_ip_task_worker(task_key, task)
         return _public_ip_task(task)
 
     @app.post("/api/ip-limited/image-tasks/edits")
@@ -599,60 +720,76 @@ def create_app() -> FastAPI:
             items = _load_ip_tasks()
             existing = items.get(task_key)
             if existing is not None:
-                return _public_ip_task(existing)
+                if existing.get("status") not in {"queued", "running"} or isinstance(existing.get("work"), dict):
+                    _ensure_ip_task_worker(task_key, existing)
+                    return _public_ip_task(existing)
 
         files = await _read_edit_uploads(image)
+        task_model = model or "gpt-image-2"
+        task_size = size or ""
+        fields = {
+            "prompt": prompt,
+            "model": task_model,
+            "n": "1",
+            "response_format": "b64_json",
+        }
+        if task_size:
+            fields["size"] = task_size
+        headers = {
+            "Authorization": _proxy_authorization(request),
+            "X-Device-Fingerprint": fingerprint,
+            "X-Forwarded-For": ip,
+        }
 
         with IP_IMAGE_TASKS_LOCK:
             items = _load_ip_tasks()
             existing = items.get(task_key)
             if existing is not None:
+                if existing.get("status") in {"queued", "running"} and not isinstance(existing.get("work"), dict):
+                    existing.update(
+                        {
+                            "ip": ip,
+                            "fingerprint": fingerprint,
+                            "model": task_model,
+                            "size": task_size,
+                            "work": {
+                                "count": 1,
+                                "fields": fields,
+                                "files": _encode_task_files(files),
+                                "headers": headers,
+                            },
+                        }
+                    )
+                    items[task_key] = existing
+                    _save_ip_tasks(items)
+                _ensure_ip_task_worker(task_key, existing)
                 return _public_ip_task(existing)
             _consume_ip_quota(ip, fingerprint, 1)
             now = _now_iso()
             task = {
                 "id": task_id,
                 "owner": owner,
+                "ip": ip,
+                "fingerprint": fingerprint,
                 "status": "queued",
                 "mode": "edit",
-                "model": model or "gpt-image-2",
-                "size": size or "",
+                "model": task_model,
+                "size": task_size,
                 "created_at": now,
                 "updated_at": now,
                 "data": None,
                 "error": "",
+                "work": {
+                    "count": 1,
+                    "fields": fields,
+                    "files": _encode_task_files(files),
+                    "headers": headers,
+                },
             }
             items[task_key] = task
             _save_ip_tasks(items)
 
-        fields = {
-            "prompt": prompt,
-            "model": model or "gpt-image-2",
-            "n": "1",
-            "response_format": "b64_json",
-        }
-        if size:
-            fields["size"] = size
-        headers = {
-            "Authorization": _proxy_authorization(request),
-            "X-Device-Fingerprint": fingerprint,
-            "X-Forwarded-For": ip,
-        }
-        Thread(
-            target=_run_ip_image_task,
-            kwargs={
-                "task_key": task_key,
-                "ip": ip,
-                "fingerprint": fingerprint,
-                "count": 1,
-                "mode": "edit",
-                "fields": fields,
-                "files": files,
-                "headers": headers,
-            },
-            daemon=True,
-            name=f"ip-image-task-{task_id[:16]}",
-        ).start()
+        _ensure_ip_task_worker(task_key, task)
         return _public_ip_task(task)
 
     @app.post("/api/ip-limited/images/generations")
