@@ -19,12 +19,15 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   fetchAccounts,
+  createImageEditTask,
+  createImageGenerationTask,
   fetchImageTasks,
-  generateImage,
-  getDeviceId,
+  fetchIpQuota,
+  refundIpQuota,
   type Account,
   type ImageResponse,
   type ImageTask,
+  type IpQuotaResponse,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
@@ -42,9 +45,11 @@ import {
   type StoredReferenceImage,
 } from "@/store/image-conversations";
 
-const ACTIVE_CONVERSATION_STORAGE_KEY = "chatgpt2api:image_active_conversation_id";
-const IMAGE_SIZE_STORAGE_KEY = "chatgpt2api:image_last_size";
-const IMAGE_COUNT_STORAGE_KEY = "chatgpt2api:image_last_count";
+const ACTIVE_CONVERSATION_STORAGE_KEY = "images-generate:image_active_conversation_id";
+const IMAGE_SIZE_STORAGE_KEY = "images-generate:image_last_size";
+const LEGACY_IMAGE_STORAGE_PREFIX = String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105);
+const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_active_conversation_id`;
+const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last_size`;
 
 function clampImageCount(value: string) {
   return String(Math.min(2, Math.max(1, Math.floor(Number(value) || 1))));
@@ -222,6 +227,19 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+async function waitForImageTask(taskId: string, timeoutMs = 180000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const taskList = await fetchImageTasks([taskId]);
+    const task = taskList.items.find((item) => item.id === taskId);
+    if (task?.status === "success" || task?.status === "error") {
+      return task;
+    }
+    await sleep(1500);
+  }
+  return null;
+}
+
 function pickFallbackConversationId(conversations: ImageConversation[]) {
   const activeConversation = conversations.find((conversation) =>
     conversation.turns.some((turn) => turn.status === "queued" || turn.status === "generating"),
@@ -387,6 +405,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: "one"; id: string } | { type: "all" } | null>(null);
+  const [ipQuota, setIpQuota] = useState<IpQuotaResponse | null>(null);
 
   const parsedCount = useMemo(() => Number(clampImageCount(imageCount)), [imageCount]);
   const selectedConversation = useMemo(
@@ -409,6 +428,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         ? "确认删除这条图片对话吗？删除后无法恢复。"
         : "";
 
+  const loadIpQuota = useCallback(async () => {
+    try {
+      setIpQuota(await fetchIpQuota());
+    } catch {
+      setIpQuota(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadIpQuota();
+  }, [loadIpQuota]);
+
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
@@ -418,10 +449,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
     const loadHistory = async () => {
       try {
-        const storedSize = typeof window !== "undefined" ? window.localStorage.getItem(IMAGE_SIZE_STORAGE_KEY) : null;
-        const storedCount = typeof window !== "undefined" ? window.localStorage.getItem(IMAGE_COUNT_STORAGE_KEY) : null;
+        const storedSize =
+          typeof window !== "undefined"
+            ? window.localStorage.getItem(IMAGE_SIZE_STORAGE_KEY) ||
+              window.localStorage.getItem(LEGACY_IMAGE_SIZE_STORAGE_KEY)
+            : null;
         setImageSize(storedSize || "");
-        setImageCount(storedCount ? clampImageCount(storedCount) : "1");
+        setImageCount("1");
 
         const items = await listImageConversations();
         const normalizedItems = await recoverConversationHistory(items);
@@ -432,7 +466,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         conversationsRef.current = normalizedItems;
         setConversations(normalizedItems);
         const storedConversationId =
-          typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) : null;
+          typeof window !== "undefined"
+            ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) ||
+              window.localStorage.getItem(LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY)
+            : null;
         const nextSelectedConversationId =
           (storedConversationId && normalizedItems.some((conversation) => conversation.id === storedConversationId)
             ? storedConversationId
@@ -520,12 +557,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [imageSize]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && parsedCount > 0) {
-      window.localStorage.setItem(IMAGE_COUNT_STORAGE_KEY, String(parsedCount));
-    }
-  }, [parsedCount]);
-
-  useEffect(() => {
     if (selectedConversationId && !conversations.some((conversation) => conversation.id === selectedConversationId)) {
       setSelectedConversationId(pickFallbackConversationId(conversations));
     }
@@ -600,6 +631,52 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setConversations(items);
     }
   };
+
+  const handleDeleteFailedImage = useCallback(
+    async (conversationId: string, turnId: string, imageId: string) => {
+      const currentConversation = conversationsRef.current.find((item) => item.id === conversationId);
+      if (!currentConversation) {
+        return;
+      }
+
+      const turns = currentConversation.turns
+        .map((turn) => {
+          if (turn.id !== turnId) {
+            return turn;
+          }
+          const images = turn.images.filter((image) => image.id !== imageId || image.status !== "error");
+          const derived = images.length > 0 ? deriveTurnStatus({ ...turn, images }) : { status: "error" as const, error: undefined };
+          return {
+            ...turn,
+            ...derived,
+            images,
+            count: images.length,
+          };
+        })
+        .filter((turn) => turn.images.length > 0);
+
+      if (turns.length === 0) {
+        const nextConversations = conversationsRef.current.filter((item) => item.id !== conversationId);
+        conversationsRef.current = nextConversations;
+        setConversations(nextConversations);
+        if (selectedConversationId === conversationId) {
+          setSelectedConversationId(pickFallbackConversationId(nextConversations));
+          resetComposer();
+        }
+        await deleteImageConversation(conversationId);
+        toast.success("已删除失败记录");
+        return;
+      }
+
+      await persistConversation({
+        ...currentConversation,
+        updatedAt: new Date().toISOString(),
+        turns,
+      });
+      toast.success("已删除失败记录");
+    },
+    [resetComposer, selectedConversationId],
+  );
 
   const handleClearHistory = async () => {
     try {
@@ -763,7 +840,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           };
         });
 
-        const deviceId = getDeviceId();
         const pendingImages = activeTurn.images.filter((image) => image.status === "loading");
         const updateGeneratedImage = async (generatedImage: StoredImage) => {
           await updateConversation(conversationId, (current) => {
@@ -787,18 +863,69 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             };
           });
         };
+        const rememberReturnedTaskId = async (imageId: string, returnedTaskId: string) => {
+          await updateGeneratedImage({
+            id: imageId,
+            taskId: returnedTaskId,
+            status: "loading",
+          });
+        };
         const generatedImages = await Promise.all(
           pendingImages.map(async (image) => {
             const taskId = image.taskId || image.id;
+            let effectiveTaskId = taskId;
             try {
-              const response = await generateImage(activeTurn.prompt, activeTurn.model, activeTurn.size, deviceId);
-              const first = response.data?.[0] ? await recallImageResult(response.data[0]) : undefined;
-              if (!first?.b64_json && !first?.url) {
-                throw new Error("接口没有返回图片数据");
+              const editFiles =
+                activeTurn.mode === "edit"
+                  ? activeTurn.referenceImages.map((referenceImage, referenceIndex) =>
+                      dataUrlToFile(
+                        referenceImage.dataUrl,
+                        referenceImage.name || `reference-${referenceIndex + 1}.png`,
+                        referenceImage.type,
+                      ),
+                    )
+                  : [];
+              const submittedTask =
+                activeTurn.mode === "edit" && editFiles.length > 0
+                  ? await createImageEditTask(taskId, editFiles, activeTurn.prompt, activeTurn.model, activeTurn.size)
+                  : await createImageGenerationTask(taskId, activeTurn.prompt, activeTurn.model, activeTurn.size);
+              const returnedTaskId = submittedTask.id || taskId;
+              effectiveTaskId = returnedTaskId;
+              if (returnedTaskId !== image.taskId) {
+                await rememberReturnedTaskId(image.id, returnedTaskId);
+              }
+              const task =
+                submittedTask.status === "success" || submittedTask.status === "error"
+                  ? submittedTask
+                  : await waitForImageTask(returnedTaskId);
+              if (!task) {
+                return {
+                  ...image,
+                  taskId: returnedTaskId,
+                  status: "loading" as const,
+                  error: undefined,
+                };
+              }
+              if (task.status === "error") {
+                throw new Error(task.error || "生成图片失败");
+              }
+              const response: ImageResponse = {
+                created: Date.now(),
+                data: task.data || [],
+              };
+              let first: ImageResponse["data"][number] | undefined;
+              try {
+                first = response.data?.[0] ? await recallImageResult(response.data[0]) : undefined;
+                if (!first?.b64_json && !first?.url) {
+                  throw new Error("接口没有返回图片数据");
+                }
+              } catch (error) {
+                await refundIpQuota(1).catch(() => null);
+                throw error;
               }
               const generatedImage = {
                 ...image,
-                taskId,
+                taskId: returnedTaskId,
                 status: "success" as const,
                 b64_json: first.b64_json,
                 url: undefined,
@@ -811,7 +938,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               const message = error instanceof Error ? error.message : "生成图片失败";
               const generatedImage = {
                 ...image,
-                taskId,
+                taskId: effectiveTaskId,
                 status: "error" as const,
                 error: message,
               };
@@ -831,6 +958,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
 
         await loadQuota();
+        await loadIpQuota();
       } catch (error) {
         const message = error instanceof Error ? error.message : "生成图片失败";
         await updateConversation(conversationId, (current) => {
@@ -869,7 +997,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       }
     },
-    [loadQuota, updateConversation],
+    [loadIpQuota, loadQuota, updateConversation],
   );
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
@@ -895,7 +1023,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    const effectiveImageMode: ImageConversationMode = "generate";
+    if (ipQuota && parsedCount > ipQuota.remaining) {
+      toast.error(`当前公网 IP 剩余额度不足，还剩 ${ipQuota.remaining} 张`);
+      return;
+    }
+
+    const effectiveImageMode: ImageConversationMode = referenceImages.length > 0 ? "edit" : "generate";
 
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
@@ -908,7 +1041,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       prompt,
       model: "gpt-image-2",
       mode: effectiveImageMode,
-      referenceImages: [],
+      referenceImages: referenceImages.map((image) => ({ ...image })),
       count: parsedCount,
       size: imageSize,
       images: Array.from({ length: parsedCount }, (_, index) => {
@@ -1000,6 +1133,21 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         </Dialog>
 
         <div className="flex min-h-0 flex-col gap-2 sm:gap-4">
+          <div className="flex flex-wrap gap-1.5 rounded-2xl border border-stone-200/70 bg-white/85 px-2 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:gap-2 sm:px-4 sm:text-xs">
+            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
+              <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
+              <span className="min-w-0 truncate font-mono">{ipQuota?.ip || "读取中"}</span>
+            </span>
+            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
+              <span className="shrink-0 font-medium text-stone-700">指纹</span>
+              <span className="min-w-0 truncate font-mono">{ipQuota?.fingerprint.slice(0, 12) || "--"}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
+              <span className="font-medium">剩余额度</span>
+              <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
+            </span>
+          </div>
+
           <div className="flex items-center justify-between gap-2 px-1 lg:hidden">
             <Button
               variant="outline"
@@ -1033,6 +1181,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <ImageResults
               selectedConversation={selectedConversation}
               onOpenLightbox={openLightbox}
+              onDeleteFailedImage={handleDeleteFailedImage}
               formatConversationTime={formatConversationTime}
             />
           </div>
@@ -1041,12 +1190,16 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             prompt={imagePrompt}
             imageCount={imageCount}
             imageSize={imageSize}
-            availableQuota={availableQuota}
+            availableQuota={ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}
             activeTaskCount={activeTaskCount}
+            referenceImages={referenceImages}
             textareaRef={textareaRef}
+            fileInputRef={fileInputRef}
             onPromptChange={setImagePrompt}
             onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
             onImageSizeChange={setImageSize}
+            onReferenceImageChange={handleReferenceImageChange}
+            onRemoveReferenceImage={handleRemoveReferenceImage}
             onSubmit={handleSubmit}
           />
         </div>

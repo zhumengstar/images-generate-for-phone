@@ -1,6 +1,7 @@
 import axios, {AxiosError, type AxiosRequestConfig} from "axios";
 
 import webConfig from "@/constants/common-env";
+import {getDeviceFingerprint} from "@/lib/device";
 import {clearStoredAuthSession, getStoredAuthKey} from "@/store/auth";
 
 type RequestConfig = AxiosRequestConfig & {
@@ -36,6 +37,9 @@ request.interceptors.request.use(async (config) => {
     const nextConfig = {...config};
     const authKey = await getStoredAuthKey();
     const headers = {...(nextConfig.headers || {})} as Record<string, string>;
+    if (!headers["X-Device-Fingerprint"]) {
+        headers["X-Device-Fingerprint"] = await getDeviceFingerprint();
+    }
     if (authKey && !headers.Authorization) {
         headers.Authorization = `Bearer ${authKey}`;
     }

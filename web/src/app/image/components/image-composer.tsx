@@ -1,10 +1,11 @@
 "use client";
-import { ArrowUp, Check, ChevronDown, LoaderCircle } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, X } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { StoredReferenceImage } from "@/store/image-conversations";
 
 type ImageComposerProps = {
   prompt: string;
@@ -12,10 +13,14 @@ type ImageComposerProps = {
   imageSize: string;
   availableQuota: string;
   activeTaskCount: number;
+  referenceImages: StoredReferenceImage[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+  fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
   onImageCountChange: (value: string) => void;
   onImageSizeChange: (value: string) => void;
+  onReferenceImageChange: (files: File[]) => void | Promise<void>;
+  onRemoveReferenceImage: (index: number) => void;
   onSubmit: () => void | Promise<void>;
 };
 
@@ -25,10 +30,14 @@ export function ImageComposer({
   imageSize,
   availableQuota,
   activeTaskCount,
+  referenceImages,
   textareaRef,
+  fileInputRef,
   onPromptChange,
   onImageCountChange,
   onImageSizeChange,
+  onReferenceImageChange,
+  onRemoveReferenceImage,
   onSubmit,
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
@@ -62,6 +71,16 @@ export function ImageComposer({
     <div className="shrink-0 flex justify-center px-1 sm:px-0">
       <div style={{ width: "min(980px, 100%)" }}>
         <div className="rounded-[24px] border border-stone-200 bg-white shadow-[0_14px_60px_-42px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:shadow-none">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              void onReferenceImageChange(Array.from(event.target.files || []));
+            }}
+          />
           <div
             className="relative cursor-text"
             onClick={() => {
@@ -82,9 +101,47 @@ export function ImageComposer({
               className="min-h-[82px] resize-none rounded-[24px] border-0 bg-transparent px-4 pt-4 pb-2 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:leading-7"
             />
 
+            {referenceImages.length > 0 ? (
+              <div className="flex gap-2 overflow-x-auto px-3 pb-2 sm:px-6">
+                {referenceImages.map((image, index) => (
+                  <div
+                    key={`${image.name}-${index}`}
+                    className="group relative size-14 shrink-0 overflow-hidden rounded-xl border border-stone-200 bg-stone-100 sm:size-16"
+                  >
+                    <img src={image.dataUrl} alt={image.name || `参考图 ${index + 1}`} className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      className="absolute right-1 top-1 inline-flex size-5 items-center justify-center rounded-full bg-black/70 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRemoveReferenceImage(index);
+                      }}
+                      aria-label="移除参考图"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
             <div className="border-t border-stone-100 bg-white px-3 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-end justify-between gap-2 sm:gap-3">
                 <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium transition sm:px-3 sm:text-xs",
+                      referenceImages.length > 0
+                        ? "border-stone-900 bg-stone-950 text-white"
+                        : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50",
+                    )}
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label="上传参考图"
+                  >
+                    <ImagePlus className="size-3.5" />
+                    {referenceImages.length > 0 ? referenceImages.length : ""}
+                  </button>
                   <div className="shrink-0 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
                     <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
                   </div>

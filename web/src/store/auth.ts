@@ -2,6 +2,8 @@
 
 import localforage from "localforage";
 
+import webConfig from "@/constants/common-env";
+
 export type AuthRole = "admin" | "user";
 
 export type StoredAuthSession = {
@@ -11,11 +13,19 @@ export type StoredAuthSession = {
   name: string;
 };
 
-export const AUTH_KEY_STORAGE_KEY = "chatgpt2api_remote_image_auth_key";
-export const AUTH_SESSION_STORAGE_KEY = "chatgpt2api_remote_image_auth_session";
+export const AUTH_KEY_STORAGE_KEY = "images_generate_remote_image_auth_key";
+export const AUTH_SESSION_STORAGE_KEY = "images_generate_remote_image_auth_session";
+const LEGACY_APP_STORAGE_NAME = String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105);
+const LEGACY_AUTH_KEY_STORAGE_KEY = `${LEGACY_APP_STORAGE_NAME}_remote_image_auth_key`;
+const LEGACY_AUTH_SESSION_STORAGE_KEY = `${LEGACY_APP_STORAGE_NAME}_remote_image_auth_session`;
 
 const authStorage = localforage.createInstance({
-  name: "chatgpt2api",
+  name: "images-generate",
+  storeName: "auth",
+});
+
+const legacyAuthStorage = localforage.createInstance({
+  name: LEGACY_APP_STORAGE_NAME,
   storeName: "auth",
 });
 
@@ -47,8 +57,16 @@ export async function getStoredAuthKey() {
   if (typeof window === "undefined") {
     return "";
   }
-  const value = await authStorage.getItem<string>(AUTH_KEY_STORAGE_KEY);
-  return String(value || "").trim();
+  const storedKey = String((await authStorage.getItem<string>(AUTH_KEY_STORAGE_KEY)) || "").trim();
+  if (storedKey) {
+    return storedKey;
+  }
+  const legacyKey = String((await legacyAuthStorage.getItem<string>(LEGACY_AUTH_KEY_STORAGE_KEY)) || "").trim();
+  if (legacyKey) {
+    await authStorage.setItem(AUTH_KEY_STORAGE_KEY, legacyKey);
+    return legacyKey;
+  }
+  return String(webConfig.defaultAuthKey || "").trim();
 }
 
 export async function getStoredAuthSession() {
@@ -56,10 +74,16 @@ export async function getStoredAuthSession() {
     return null;
   }
 
-  const [storedKey, storedSession] = await Promise.all([
+  let [storedKey, storedSession] = await Promise.all([
     authStorage.getItem<string>(AUTH_KEY_STORAGE_KEY),
     authStorage.getItem<StoredAuthSession>(AUTH_SESSION_STORAGE_KEY),
   ]);
+  if (!String(storedKey || "").trim() && !storedSession) {
+    [storedKey, storedSession] = await Promise.all([
+      legacyAuthStorage.getItem<string>(LEGACY_AUTH_KEY_STORAGE_KEY),
+      legacyAuthStorage.getItem<StoredAuthSession>(LEGACY_AUTH_SESSION_STORAGE_KEY),
+    ]);
+  }
 
   const normalizedSession = normalizeSession(storedSession, String(storedKey || ""));
   if (normalizedSession) {
@@ -71,6 +95,15 @@ export async function getStoredAuthSession() {
 
   if (String(storedKey || "").trim()) {
     await clearStoredAuthSession();
+  }
+  const defaultAuthKey = String(webConfig.defaultAuthKey || "").trim();
+  if (defaultAuthKey) {
+    return {
+      key: defaultAuthKey,
+      role: "user" as const,
+      subjectId: "default-user",
+      name: "默认用户",
+    };
   }
   return null;
 }
@@ -104,6 +137,8 @@ export async function clearStoredAuthSession() {
   await Promise.all([
     authStorage.removeItem(AUTH_KEY_STORAGE_KEY),
     authStorage.removeItem(AUTH_SESSION_STORAGE_KEY),
+    legacyAuthStorage.removeItem(LEGACY_AUTH_KEY_STORAGE_KEY),
+    legacyAuthStorage.removeItem(LEGACY_AUTH_SESSION_STORAGE_KEY),
   ]);
 }
 

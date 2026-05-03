@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Clock3, LoaderCircle } from "lucide-react";
+import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { ImageConversation, ImageTurnStatus, StoredImage } from "@/store/image-conversations";
@@ -16,6 +16,7 @@ export type ImageLightboxItem = {
 type ImageResultsProps = {
   selectedConversation: ImageConversation | null;
   onOpenLightbox: (images: ImageLightboxItem[], index: number) => void;
+  onDeleteFailedImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
 };
 
@@ -29,6 +30,7 @@ function getStoredImageSrc(image: StoredImage) {
 export function ImageResults({
   selectedConversation,
   onOpenLightbox,
+  onDeleteFailedImage,
   formatConversationTime,
 }: ImageResultsProps) {
   const [imageDimensions, setImageDimensions] = useState<Record<string, string>>({});
@@ -61,7 +63,7 @@ export function ImageResults({
               fontFamily: '"Palatino Linotype","Book Antiqua","URW Palladio L","Times New Roman",serif',
             }}
           >
-            输入提示词生成图片，历史记录会保留在这台设备上。
+            输入提示词生成图片，历史记录会保留在当前浏览器中。
           </p>
         </div>
       </div>
@@ -91,7 +93,7 @@ export function ImageResults({
               <div className="max-w-[90%] px-1 py-1 text-[14px] leading-6 text-stone-900 sm:max-w-[82%] sm:text-[15px] sm:leading-7">
                 <div className="mb-1.5 flex flex-wrap justify-end gap-2 text-[11px] text-stone-400 sm:mb-2">
                   <span>第 {turnIndex + 1} 轮</span>
-                  <span>图片生成</span>
+                  <span>{turn.mode === "edit" ? "图片编辑" : "图片生成"}</span>
                   <span>{getTurnStatusLabel(turn.status)}</span>
                   <span>{formatConversationTime(turn.createdAt)}</span>
                 </div>
@@ -197,8 +199,16 @@ export function ImageResults({
                             !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "sm:aspect-square",
                           )}
                         >
-                          <div className="flex h-full min-h-16 items-center justify-center px-4 py-4 text-center text-sm leading-6 text-rose-600 sm:px-6 sm:py-8">
-                            {image.error || "生成失败"}
+                          <div className="flex h-full min-h-16 flex-col items-center justify-center gap-3 px-4 py-4 text-center text-sm leading-6 text-rose-600 sm:px-6 sm:py-8">
+                            <div>{image.error || "生成失败"}</div>
+                            <button
+                              type="button"
+                              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3 text-xs font-medium text-rose-600 shadow-sm transition hover:bg-rose-100"
+                              onClick={() => void onDeleteFailedImage(selectedConversation.id, turn.id, image.id)}
+                            >
+                              <Trash2 className="size-3.5" />
+                              删除
+                            </button>
                           </div>
                         </div>
                       );

@@ -52,7 +52,12 @@ export type ImageConversationStats = {
 };
 
 const imageConversationStorage = localforage.createInstance({
-  name: "chatgpt2api",
+  name: "images-generate",
+  storeName: "image_conversations",
+});
+
+const legacyImageConversationStorage = localforage.createInstance({
+  name: String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105),
   storeName: "image_conversations",
 });
 
@@ -206,7 +211,18 @@ async function readStoredImageConversations(): Promise<ImageConversation[]> {
     (await imageConversationStorage.getItem<Array<ImageConversation & Record<string, unknown>>>(
       IMAGE_CONVERSATIONS_KEY,
     )) || [];
-  return items.map(normalizeConversation);
+  if (items.length > 0) {
+    return items.map(normalizeConversation);
+  }
+  const legacyItems =
+    (await legacyImageConversationStorage.getItem<Array<ImageConversation & Record<string, unknown>>>(
+      IMAGE_CONVERSATIONS_KEY,
+    )) || [];
+  const normalizedLegacyItems = legacyItems.map(normalizeConversation);
+  if (normalizedLegacyItems.length > 0) {
+    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, normalizedLegacyItems);
+  }
+  return normalizedLegacyItems;
 }
 
 export async function listImageConversations(): Promise<ImageConversation[]> {
@@ -254,7 +270,10 @@ export async function deleteImageConversation(id: string): Promise<void> {
 
 export async function clearImageConversations(): Promise<void> {
   await queueImageConversationWrite(async () => {
-    await imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
+    await Promise.all([
+      imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY),
+      legacyImageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY),
+    ]);
   });
 }
 

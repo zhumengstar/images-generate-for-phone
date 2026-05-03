@@ -4,6 +4,10 @@ ARG TARGETARCH
 
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web-build
 
+ARG NEXT_PUBLIC_API_URL=
+ARG NEXT_PUBLIC_DEFAULT_AUTH_KEY=
+ARG NEXT_PUBLIC_APP_VERSION=
+
 WORKDIR /app/web
 
 COPY web/package.json web/bun.lock ./
@@ -11,7 +15,10 @@ RUN npm install
 
 COPY VERSION /app/VERSION
 COPY web ./
-RUN NEXT_PUBLIC_APP_VERSION="$(cat /app/VERSION)" npm run build
+RUN NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL}" \
+    NEXT_PUBLIC_DEFAULT_AUTH_KEY="${NEXT_PUBLIC_DEFAULT_AUTH_KEY}" \
+    NEXT_PUBLIC_APP_VERSION="${NEXT_PUBLIC_APP_VERSION:-$(cat /app/VERSION)}" \
+    npm run build
 
 
 FROM --platform=$TARGETPLATFORM python:3.13-slim AS app

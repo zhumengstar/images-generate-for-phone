@@ -1,4 +1,6 @@
 import { httpRequest } from "@/lib/request";
+import { getDeviceFingerprint } from "@/lib/device";
+import { getStoredAuthKey } from "@/store/auth";
 
 export type AccountType = "Free" | "Plus" | "ProLite" | "Pro" | "Team";
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
@@ -81,6 +83,19 @@ export type SystemLog = {
 export type ImageResponse = {
   created: number;
   data: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
+  ip_quota?: {
+    ip: string;
+    fingerprint: string;
+    limit: number;
+    remaining: number;
+  };
+};
+
+export type IpQuotaResponse = {
+  ip: string;
+  fingerprint: string;
+  limit: number;
+  remaining: number;
 };
 
 export type ImageTask = {
@@ -155,34 +170,31 @@ export type RegisterConfig = {
   }>;
 };
 
-const DEVICE_ID_STORAGE_KEY = "chatgpt2api:image_device_id";
-
-export function getDeviceId() {
-  if (typeof window === "undefined") {
-    return "server";
+function errorMessageFromValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
   }
-
-  const stored = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
-  if (stored) {
-    return stored;
+  if (!value || typeof value !== "object") {
+    return "";
   }
-
-  const randomId =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const deviceId = `device-${randomId}`;
-  window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, deviceId);
-  return deviceId;
+  const item = value as { error?: unknown; message?: unknown };
+  if (typeof item.message === "string") {
+    return item.message;
+  }
+  return errorMessageFromValue(item.error);
 }
 
 export async function login(authKey: string) {
   const normalizedAuthKey = String(authKey || "").trim();
+  const deviceFingerprint = await getDeviceFingerprint();
   return httpRequest<LoginResponse>("/auth/login", {
     method: "POST",
-    body: {},
+    body: {
+      device_fingerprint: deviceFingerprint,
+    },
     headers: {
       Authorization: `Bearer ${normalizedAuthKey}`,
+      "X-Device-Fingerprint": deviceFingerprint,
     },
     redirectOnUnauthorized: false,
   });
@@ -230,28 +242,68 @@ export async function updateAccount(
   });
 }
 
-export async function generateImage(prompt: string, model?: ImageModel, size?: string, deviceId = getDeviceId()) {
-  return httpRequest<ImageResponse>(
-    "/v1/images/generations",
-    {
-      method: "POST",
-      body: {
+export async function generateImage(prompt: string, model?: ImageModel, size?: string) {
+  const authKey = await getStoredAuthKey();
+  const deviceFingerprint = await getDeviceFingerprint();
+  const response = await fetch("/api/ip-limited/images/generations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": deviceFingerprint,
+    },
+    body: JSON.stringify({
         prompt,
         ...(model ? { model } : {}),
         ...(size ? { size } : {}),
         n: 1,
         response_format: "b64_json",
-        user: deviceId,
-        client_device_id: deviceId,
-      },
-      headers: {
-        "X-Device-Id": deviceId,
-      },
-    },
-  );
+        client_device_fingerprint: deviceFingerprint,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      payload.message ||
+      `生成失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as ImageResponse;
 }
 
-export async function editImage(files: File | File[], prompt: string, model?: ImageModel, size?: string) {
+export async function fetchIpQuota() {
+  const response = await fetch("/api/ip-limited/quota", {
+    cache: "no-store",
+    headers: {
+      "X-Device-Fingerprint": await getDeviceFingerprint(),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`读取 IP 额度失败 (${response.status})`);
+  }
+  return (await response.json()) as IpQuotaResponse;
+}
+
+export async function refundIpQuota(count = 1) {
+  const response = await fetch("/api/ip-limited/quota/refund", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Device-Fingerprint": await getDeviceFingerprint(),
+    },
+    body: JSON.stringify({ count }),
+  });
+  if (!response.ok) {
+    throw new Error(`退回 IP 额度失败 (${response.status})`);
+  }
+  return (await response.json()) as IpQuotaResponse;
+}
+
+export async function editImage(files: File | File[], prompt: string, model?: ImageModel, size?: string, count = 1) {
+  const authKey = await getStoredAuthKey();
+  const deviceFingerprint = await getDeviceFingerprint();
   const formData = new FormData();
   const uploadFiles = Array.isArray(files) ? files : [files];
 
@@ -265,27 +317,56 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
   if (size) {
     formData.append("size", size);
   }
-  formData.append("n", "1");
+  formData.append("n", String(Math.min(2, Math.max(1, Math.floor(count) || 1))));
+  formData.append("response_format", "b64_json");
 
-  return httpRequest<ImageResponse>(
-    "/v1/images/edits",
-    {
-      method: "POST",
-      body: formData,
+  const response = await fetch("/api/ip-limited/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": deviceFingerprint,
     },
-  );
+    body: formData,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      payload.message ||
+      `图片编辑失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as ImageResponse;
 }
 
 export async function createImageGenerationTask(clientTaskId: string, prompt: string, model?: ImageModel, size?: string) {
-  return httpRequest<ImageTask>("/api/image-tasks/generations", {
+  const authKey = await getStoredAuthKey();
+  const deviceFingerprint = await getDeviceFingerprint();
+  const response = await fetch("/api/ip-limited/image-tasks/generations", {
     method: "POST",
-    body: {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": deviceFingerprint,
+    },
+    body: JSON.stringify({
       client_task_id: clientTaskId,
       prompt,
       ...(model ? { model } : {}),
       ...(size ? { size } : {}),
-    },
+    }),
   });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      payload.message ||
+      `创建生成任务失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as ImageTask;
 }
 
 export async function createImageEditTask(
@@ -295,6 +376,8 @@ export async function createImageEditTask(
   model?: ImageModel,
   size?: string,
 ) {
+  const authKey = await getStoredAuthKey();
+  const deviceFingerprint = await getDeviceFingerprint();
   const formData = new FormData();
   const uploadFiles = Array.isArray(files) ? files : [files];
 
@@ -310,10 +393,24 @@ export async function createImageEditTask(
     formData.append("size", size);
   }
 
-  return httpRequest<ImageTask>("/api/image-tasks/edits", {
+  const response = await fetch("/api/ip-limited/image-tasks/edits", {
     method: "POST",
+    headers: {
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": deviceFingerprint,
+    },
     body: formData,
   });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      payload.message ||
+      `创建编辑任务失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as ImageTask;
 }
 
 export async function fetchImageTasks(ids: string[]) {
@@ -321,7 +418,16 @@ export async function fetchImageTasks(ids: string[]) {
   if (ids.length > 0) {
     params.set("ids", ids.join(","));
   }
-  return httpRequest<ImageTaskListResponse>(`/api/image-tasks${params.toString() ? `?${params.toString()}` : ""}`);
+  const response = await fetch(`/api/ip-limited/image-tasks${params.toString() ? `?${params.toString()}` : ""}`, {
+    cache: "no-store",
+    headers: {
+      "X-Device-Fingerprint": await getDeviceFingerprint(),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`读取图片任务失败 (${response.status})`);
+  }
+  return (await response.json()) as ImageTaskListResponse;
 }
 
 export async function fetchSettingsConfig() {
