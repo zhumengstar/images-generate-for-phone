@@ -174,6 +174,17 @@ def _stable_image_count(data: dict[str, Any]) -> int:
     return sum(1 for item in items if isinstance(item, dict) and item.get("b64_json"))
 
 
+def _web_asset_headers(asset_path: Any) -> dict[str, str]:
+    path_text = str(asset_path).replace("\\", "/")
+    if path_text.endswith(".html"):
+        return {"Cache-Control": "public, max-age=0, must-revalidate"}
+    if "/_next/static/" in path_text:
+        return {"Cache-Control": "public, max-age=31536000, immutable"}
+    if path_text.endswith((".js", ".css", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".ico")):
+        return {"Cache-Control": "public, max-age=86400"}
+    return {"Cache-Control": "public, max-age=3600"}
+
+
 async def _read_json_object(request: Request) -> dict[str, Any]:
     try:
         payload = await request.json()
@@ -952,12 +963,12 @@ def create_app() -> FastAPI:
     async def serve_web(full_path: str):
         asset = resolve_web_asset(full_path)
         if asset is not None:
-            return FileResponse(asset)
+            return FileResponse(asset, headers=_web_asset_headers(asset))
         if full_path.strip("/").startswith("_next/"):
             raise HTTPException(status_code=404, detail="Not Found")
         fallback = resolve_web_asset("")
         if fallback is None:
             raise HTTPException(status_code=404, detail="Not Found")
-        return FileResponse(fallback)
+        return FileResponse(fallback, headers=_web_asset_headers(fallback))
 
     return app
