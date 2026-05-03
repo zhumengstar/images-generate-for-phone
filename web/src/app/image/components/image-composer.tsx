@@ -1,5 +1,5 @@
 "use client";
-import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ type ImageComposerProps = {
   availableQuota: string;
   queuedTaskCount: number;
   runningTaskCount: number;
+  isPolishingPrompt: boolean;
   referenceImages: StoredReferenceImage[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -22,6 +23,7 @@ type ImageComposerProps = {
   onImageSizeChange: (value: string) => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
   onRemoveReferenceImage: (index: number) => void;
+  onPolishPrompt: () => void | Promise<void>;
   onSubmit: () => void | Promise<void>;
 };
 
@@ -32,6 +34,7 @@ export function ImageComposer({
   availableQuota,
   queuedTaskCount,
   runningTaskCount,
+  isPolishingPrompt,
   referenceImages,
   textareaRef,
   fileInputRef,
@@ -40,6 +43,7 @@ export function ImageComposer({
   onImageSizeChange,
   onReferenceImageChange,
   onRemoveReferenceImage,
+  onPolishPrompt,
   onSubmit,
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
@@ -100,8 +104,21 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:text-[15px] sm:leading-7"
+              className="max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7"
             />
+            <button
+              type="button"
+              className="absolute top-3 right-3 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:top-5 sm:right-5 sm:h-9 sm:px-3 sm:text-xs"
+              onClick={(event) => {
+                event.stopPropagation();
+                void onPolishPrompt();
+              }}
+              disabled={!prompt.trim() || isPolishingPrompt}
+              aria-label="AI润色"
+            >
+              {isPolishingPrompt ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+              <span className="hidden min-[390px]:inline">AI润色</span>
+            </button>
 
             {referenceImages.length > 0 ? (
               <div className="hide-scrollbar flex gap-2 overflow-x-auto px-3 pb-2 sm:px-6">

@@ -31,6 +31,7 @@ IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "http://165.154.254.130
 IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
 IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
 IMAGE_EDIT_MAX_SIDE = int(os.getenv("IMAGE_PROXY_EDIT_MAX_SIDE", "2048"))
+PROMPT_POLISH_MODEL = os.getenv("IMAGE_PROMPT_POLISH_MODEL", "auto")
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
 IP_QUOTA_LOCK = Lock()
@@ -210,6 +211,33 @@ def _decode_proxy_body(raw_body: bytes) -> dict[str, Any]:
     except Exception:
         data = {"error": response_body}
     return data if isinstance(data, dict) else {"error": response_body}
+
+
+def _chat_text_from_response(data: dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            message = first.get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content.strip()
+                if isinstance(content, list):
+                    parts = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            text = item.get("text") or item.get("content")
+                            if isinstance(text, str):
+                                parts.append(text)
+                    return "\n".join(parts).strip()
+            text = first.get("text")
+            if isinstance(text, str):
+                return text.strip()
+    output_text = data.get("output_text")
+    if isinstance(output_text, str):
+        return output_text.strip()
+    return ""
 
 
 def _proxy_error_message(exc: BaseException) -> str:
@@ -565,6 +593,48 @@ def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) ->
             return 502, {"error": f"image proxy request failed: {_proxy_error_message(exc)}"}
 
 
+def _proxy_prompt_polish(prompt: str, mode: str, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
+    instruction = (
+        "你是专业的图像生成提示词优化助手。请在保留用户原意的基础上，"
+        "把输入改写成更清晰、更适合 AI 绘图的中文提示词。"
+        "补充画面主体、构图、光线、材质、镜头、氛围和细节；"
+        "不要解释，不要加标题，只输出润色后的提示词。"
+    )
+    if mode == "edit":
+        instruction += "这是基于参考图的图片编辑任务，请强调保留原图核心结构并说明需要修改的部分。"
+    payload = {
+        "model": PROMPT_POLISH_MODEL,
+        "messages": [
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.7,
+        "stream": False,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request_headers = {
+        **headers,
+        "Content-Type": "application/json",
+    }
+    request = urllib.request.Request(
+        f"{IMAGE_PROXY_BASE_URL}/v1/chat/completions",
+        data=body,
+        headers=request_headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+            data = _decode_proxy_body(response.read())
+            text = _chat_text_from_response(data)
+            if text:
+                data["text"] = text
+            return response.status, data
+    except urllib.error.HTTPError as exc:
+        return exc.code, _decode_proxy_body(exc.read())
+    except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+        return 502, {"error": f"prompt polish request failed: {_proxy_error_message(exc)}"}
+
+
 def _build_multipart_body(fields: dict[str, str], files: list[tuple[str, str, str, bytes]]) -> tuple[str, bytes]:
     boundary = f"----imagesgenerate{uuid.uuid4().hex}"
     chunks: list[bytes] = []
@@ -665,6 +735,31 @@ def create_app() -> FastAPI:
         count = max(1, min(2, int(payload.get("count") or 1)))
         _refund_ip_quota(ip, fingerprint, count)
         return _ip_quota_payload(request, ip, fingerprint)
+
+    @app.post("/api/ip-limited/prompt-polish")
+    async def polish_prompt(request: Request):
+        ip = _client_ip(request)
+        fingerprint = _device_fingerprint(request)
+        payload = await _read_json_object(request)
+        prompt = str(payload.get("prompt") or "").strip()
+        mode = "edit" if payload.get("mode") == "edit" else "generate"
+        if not prompt:
+            raise HTTPException(status_code=400, detail={"error": "prompt is required"})
+        if len(prompt) > 2000:
+            raise HTTPException(status_code=400, detail={"error": "prompt is too long"})
+
+        headers = {
+            "Authorization": _proxy_authorization(request),
+            "X-Device-Fingerprint": fingerprint,
+            "X-Forwarded-For": ip,
+        }
+        status, data = _proxy_prompt_polish(prompt, mode, headers)
+        if status >= 400:
+            return JSONResponse(status_code=status, content=data)
+        polished = _chat_text_from_response(data) if isinstance(data, dict) else ""
+        if not polished:
+            return JSONResponse(status_code=502, content={"error": "AI 没有返回润色结果"})
+        return {"text": polished, "model": PROMPT_POLISH_MODEL}
 
     @app.get("/api/ip-limited/image-tasks")
     async def list_ip_image_tasks(request: Request, ids: str = ""):

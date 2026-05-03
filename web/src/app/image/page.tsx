@@ -23,6 +23,7 @@ import {
   createImageGenerationTask,
   fetchImageTasks,
   fetchIpQuota,
+  polishImagePrompt,
   refundIpQuota,
   type Account,
   type ImageResponse,
@@ -456,6 +457,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: "one"; id: string } | { type: "all" } | null>(null);
   const [ipQuota, setIpQuota] = useState<IpQuotaResponse | null>(null);
+  const [isPolishingPrompt, setIsPolishingPrompt] = useState(false);
 
   const parsedCount = useMemo(() => Number(clampImageCount(imageCount)), [imageCount]);
   const selectedConversation = useMemo(
@@ -1207,6 +1209,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
+  const handlePolishPrompt = useCallback(async () => {
+    const prompt = imagePrompt.trim();
+    if (!prompt || isPolishingPrompt) {
+      return;
+    }
+    setIsPolishingPrompt(true);
+    try {
+      const mode: ImageConversationMode = referenceImages.length > 0 ? "edit" : "generate";
+      const result = await polishImagePrompt(prompt, mode);
+      const nextPrompt = result.text.trim();
+      if (!nextPrompt) {
+        throw new Error("AI没有返回润色结果");
+      }
+      setImagePrompt(nextPrompt);
+      toast.success("AI已润色提示词");
+      window.setTimeout(() => textareaRef.current?.focus(), 0);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "AI润色失败"));
+    } finally {
+      setIsPolishingPrompt(false);
+    }
+  }, [imagePrompt, isPolishingPrompt, referenceImages.length]);
+
   return (
     <>
       <section className="mx-auto grid h-[calc(100dvh-3rem)] min-h-0 w-full max-w-[1380px] grid-cols-1 gap-1 overflow-hidden px-0 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] sm:h-[calc(100dvh-5rem)] sm:gap-3 sm:px-3 sm:pb-6 lg:grid-cols-[240px_minmax(0,1fr)]">
@@ -1320,6 +1345,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             availableQuota={ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}
             queuedTaskCount={taskStats.queued}
             runningTaskCount={taskStats.running}
+            isPolishingPrompt={isPolishingPrompt}
             referenceImages={referenceImages}
             textareaRef={textareaRef}
             fileInputRef={fileInputRef}
@@ -1328,6 +1354,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onImageSizeChange={setImageSize}
             onReferenceImageChange={handleReferenceImageChange}
             onRemoveReferenceImage={handleRemoveReferenceImage}
+            onPolishPrompt={handlePolishPrompt}
             onSubmit={handleSubmit}
           />
         </div>

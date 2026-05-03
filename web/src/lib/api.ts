@@ -112,6 +112,11 @@ export type ImageTask = {
   error?: string;
 };
 
+type PromptPolishResponse = {
+  text: string;
+  model?: string;
+};
+
 type ImageTaskListResponse = {
   items: ImageTask[];
   missing_ids: string[];
@@ -303,6 +308,30 @@ export async function refundIpQuota(count = 1) {
     throw new Error(`退回 IP 额度失败 (${response.status})`);
   }
   return (await response.json()) as IpQuotaResponse;
+}
+
+export async function polishImagePrompt(prompt: string, mode: "generate" | "edit" = "generate") {
+  const authKey = await getStoredAuthKey();
+  const deviceFingerprint = await getDeviceFingerprint();
+  const response = await fetch("/api/ip-limited/prompt-polish", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": deviceFingerprint,
+    },
+    body: JSON.stringify({ prompt, mode }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      payload.message ||
+      `AI润色失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as PromptPolishResponse;
 }
 
 export async function editImage(files: File | File[], prompt: string, model?: ImageModel, size?: string, count = 1) {
