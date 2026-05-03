@@ -49,6 +49,7 @@ export function ImageComposer({
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
   const [sizeMenuStyle, setSizeMenuStyle] = useState<CSSProperties>({});
   const sizeMenuRef = useRef<HTMLDivElement>(null);
+  const sizeButtonRef = useRef<HTMLButtonElement>(null);
   const imageSizeOptions = [
     { value: "", label: "未指定" },
     { value: "1:1", label: "1:1 (正方形)" },
@@ -65,36 +66,40 @@ export function ImageComposer({
   ];
   const imageSizeLabel = imageSizeOptions.find((option) => option.value === imageSize)?.label || "未指定";
 
+  const updateSizeMenuPosition = () => {
+    const rect = sizeButtonRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+    const isSmallScreen = window.innerWidth < 640;
+    const menuWidth = isSmallScreen ? window.innerWidth - 32 : 190;
+    const preferredLeft = rect.left + rect.width / 2 - menuWidth / 2;
+    const left = isSmallScreen ? 16 : Math.max(12, Math.min(preferredLeft, window.innerWidth - menuWidth - 12));
+    setSizeMenuStyle({
+      left,
+      width: menuWidth,
+      bottom: Math.max(12, window.innerHeight - rect.top + 8),
+      maxHeight: Math.min(window.innerHeight * 0.45, Math.max(180, rect.top - 24)),
+    });
+  };
+
   useEffect(() => {
     if (!isSizeMenuOpen) {
       return;
     }
-    const updateMenuPosition = () => {
-      const rect = sizeMenuRef.current?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
-      const menuWidth = window.innerWidth < 640 ? window.innerWidth - 32 : 220;
-      const left = window.innerWidth < 640 ? 16 : Math.max(12, Math.min(rect.left, window.innerWidth - menuWidth - 12));
-      setSizeMenuStyle({
-        left,
-        width: menuWidth,
-        bottom: Math.max(12, window.innerHeight - rect.top + 10),
-      });
-    };
     const handlePointerDown = (event: MouseEvent) => {
       if (!sizeMenuRef.current?.contains(event.target as Node)) {
         setIsSizeMenuOpen(false);
       }
     };
-    updateMenuPosition();
+    updateSizeMenuPosition();
     window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
+    window.addEventListener("resize", updateSizeMenuPosition);
+    window.addEventListener("scroll", updateSizeMenuPosition, true);
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
+      window.removeEventListener("resize", updateSizeMenuPosition);
+      window.removeEventListener("scroll", updateSizeMenuPosition, true);
     };
   }, [isSizeMenuOpen]);
 
@@ -222,16 +227,22 @@ export function ImageComposer({
                   >
                     <span className="font-medium text-stone-700 sm:text-sm">比例</span>
                     <button
+                      ref={sizeButtonRef}
                       type="button"
                       className="flex h-7 w-[78px] items-center justify-between bg-transparent text-left text-xs font-bold text-stone-700 min-[390px]:w-[96px] sm:h-8 sm:w-[132px]"
-                      onClick={() => setIsSizeMenuOpen((open) => !open)}
+                      onClick={() => {
+                        if (!isSizeMenuOpen) {
+                          updateSizeMenuPosition();
+                        }
+                        setIsSizeMenuOpen((open) => !open);
+                      }}
                     >
                       <span className="truncate">{imageSizeLabel}</span>
                       <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
                     </button>
                     {isSizeMenuOpen ? (
                       <div
-                        className="fixed z-[100] max-h-[45dvh] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
+                        className="fixed z-[100] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
                         style={sizeMenuStyle}
                       >
                         {imageSizeOptions.map((option) => {
