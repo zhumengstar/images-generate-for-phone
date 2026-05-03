@@ -284,10 +284,12 @@ export function getImageConversationStats(conversation: ImageConversation | null
 
   return conversation.turns.reduce(
     (acc, turn) => {
+      const loadingCount = turn.images.filter((image) => image.status === "loading").length;
       if (turn.status === "queued") {
-        acc.queued += 1;
+        acc.queued += loadingCount;
       } else if (turn.status === "generating") {
-        acc.running += 1;
+        acc.running += Math.min(1, loadingCount);
+        acc.queued += Math.max(0, loadingCount - 1);
       }
       return acc;
     },

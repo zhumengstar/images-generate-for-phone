@@ -12,7 +12,8 @@ type ImageComposerProps = {
   imageCount: string;
   imageSize: string;
   availableQuota: string;
-  activeTaskCount: number;
+  queuedTaskCount: number;
+  runningTaskCount: number;
   referenceImages: StoredReferenceImage[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -29,7 +30,8 @@ export function ImageComposer({
   imageCount,
   imageSize,
   availableQuota,
-  activeTaskCount,
+  queuedTaskCount,
+  runningTaskCount,
   referenceImages,
   textareaRef,
   fileInputRef,
@@ -145,10 +147,15 @@ export function ImageComposer({
                   <div className="shrink-0 rounded-full bg-stone-100 px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
                     <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
                   </div>
-                  {activeTaskCount > 0 && (
+                  {runningTaskCount > 0 && (
                     <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1.5 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />
-                      {activeTaskCount}<span className="hidden sm:inline"> 个任务处理中</span>
+                      {runningTaskCount}<span className="hidden sm:inline"> 个处理中</span>
+                    </div>
+                  )}
+                  {queuedTaskCount > 0 && (
+                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
+                      {queuedTaskCount}<span className="hidden sm:inline"> 个排队中</span>
                     </div>
                   )}
                   <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">

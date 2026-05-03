@@ -277,6 +277,27 @@ function sortImageConversations(conversations: ImageConversation[]) {
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function hasLoadingTurn(conversation: ImageConversation, status?: ImageTurnStatus) {
+  return conversation.turns.some(
+    (turn) =>
+      (!status || turn.status === status) &&
+      (turn.status === "queued" || turn.status === "generating") &&
+      turn.images.some((image) => image.status === "loading"),
+  );
+}
+
+function findRunnableConversation(items: ImageConversation[]) {
+  return (
+    items.find((conversation) => hasLoadingTurn(conversation, "generating")) ??
+    items.find((conversation) => hasLoadingTurn(conversation, "queued")) ??
+    null
+  );
+}
+
+function hasOtherGeneratingConversation(items: ImageConversation[], conversationId: string) {
+  return items.some((conversation) => conversation.id !== conversationId && hasLoadingTurn(conversation, "generating"));
+}
+
 function deriveTurnStatus(turn: ImageTurn): Pick<ImageTurn, "status" | "error"> {
   const loadingCount = turn.images.filter((image) => image.status === "loading").length;
   const failedCount = turn.images.filter((image) => image.status === "error").length;
@@ -441,12 +462,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
   );
-  const activeTaskCount = useMemo(
+  const taskStats = useMemo(
     () =>
-      conversations.reduce((sum, conversation) => {
-        const stats = getImageConversationStats(conversation);
-        return sum + stats.queued + stats.running;
-      }, 0),
+      conversations.reduce(
+        (sum, conversation) => {
+          const stats = getImageConversationStats(conversation);
+          return {
+            queued: sum.queued + stats.queued,
+            running: sum.running + stats.running,
+          };
+        },
+        { queued: 0, running: 0 },
+      ),
     [conversations],
   );
   const deleteConfirmTitle = deleteConfirm?.type === "all" ? "清空历史记录" : deleteConfirm?.type === "one" ? "删除对话" : "";
@@ -846,7 +873,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   /* eslint-disable react-hooks/preserve-manual-memoization */
   const runConversationQueue = useCallback(
     async (conversationId: string) => {
-      if (activeConversationQueueIds.has(conversationId)) {
+      if (activeConversationQueueIds.size > 0) {
         return;
       }
 
@@ -857,6 +884,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           turn.images.some((image) => image.status === "loading"),
       );
       if (!snapshot || !activeTurn) {
+        return;
+      }
+      if (activeTurn.status === "queued" && hasOtherGeneratingConversation(conversationsRef.current, conversationId)) {
         return;
       }
 
@@ -1085,16 +1115,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         toast.error(message);
       } finally {
         activeConversationQueueIds.delete(conversationId);
-        for (const conversation of conversationsRef.current) {
-          if (
-            !activeConversationQueueIds.has(conversation.id) &&
-            conversation.turns.some(
-              (turn) =>
-                (turn.status === "queued" || turn.status === "generating") &&
-                turn.images.some((image) => image.status === "loading"),
-            )
-          ) {
-            void runConversationQueue(conversation.id);
+        if (activeConversationQueueIds.size === 0) {
+          const nextConversation = findRunnableConversation(conversationsRef.current);
+          if (nextConversation) {
+            void runConversationQueue(nextConversation.id);
           }
         }
       }
@@ -1104,17 +1128,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
   useEffect(() => {
-    for (const conversation of conversations) {
-      if (
-        !activeConversationQueueIds.has(conversation.id) &&
-        conversation.turns.some(
-          (turn) =>
-            (turn.status === "queued" || turn.status === "generating") &&
-            turn.images.some((image) => image.status === "loading"),
-        )
-      ) {
-        void runConversationQueue(conversation.id);
-      }
+    if (activeConversationQueueIds.size > 0) {
+      return;
+    }
+    const nextConversation = findRunnableConversation(conversations);
+    if (nextConversation) {
+      void runConversationQueue(nextConversation.id);
     }
   }, [conversations, runConversationQueue]);
 
@@ -1299,7 +1318,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             imageCount={imageCount}
             imageSize={imageSize}
             availableQuota={ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}
-            activeTaskCount={activeTaskCount}
+            queuedTaskCount={taskStats.queued}
+            runningTaskCount={taskStats.running}
             referenceImages={referenceImages}
             textareaRef={textareaRef}
             fileInputRef={fileInputRef}

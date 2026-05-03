@@ -37,6 +37,7 @@ IP_QUOTA_LOCK = Lock()
 IP_IMAGE_TASKS_LOCK = Lock()
 ACTIVE_IP_TASK_LOCK = Lock()
 ACTIVE_IP_TASKS: set[str] = set()
+ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
 
 
 def _now_iso() -> str:
@@ -404,7 +405,29 @@ def _normalize_task_fields(value: Any) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items() if item is not None}
 
 
+def _queued_task_sort_key(item: tuple[str, dict[str, Any]]) -> str:
+    return str(item[1].get("created_at") or item[1].get("updated_at") or "")
+
+
+def _next_owner_ip_task(owner: str, exclude_task_key: str = "") -> tuple[str, dict[str, Any]] | None:
+    with IP_IMAGE_TASKS_LOCK:
+        items = _load_ip_tasks()
+        queued = [
+            (key, task)
+            for key, task in items.items()
+            if key != exclude_task_key
+            and task.get("owner") == owner
+            and task.get("status") in {"queued", "running"}
+            and isinstance(task.get("work"), dict)
+        ]
+    if not queued:
+        return None
+    queued.sort(key=_queued_task_sort_key)
+    return queued[0]
+
+
 def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
+    owner = str(task.get("owner") or "").strip()
     work = task.get("work") if isinstance(task.get("work"), dict) else {}
     try:
         _run_ip_image_task(
@@ -421,6 +444,11 @@ def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
     finally:
         with ACTIVE_IP_TASK_LOCK:
             ACTIVE_IP_TASKS.discard(task_key)
+            if owner and ACTIVE_IP_TASK_OWNERS.get(owner) == task_key:
+                ACTIVE_IP_TASK_OWNERS.pop(owner, None)
+        next_task = _next_owner_ip_task(owner, exclude_task_key=task_key) if owner else None
+        if next_task is not None:
+            _ensure_ip_task_worker(*next_task)
 
 
 def _ensure_ip_task_worker(task_key: str, task: dict[str, Any]) -> bool:
@@ -428,10 +456,17 @@ def _ensure_ip_task_worker(task_key: str, task: dict[str, Any]) -> bool:
         return False
     if not isinstance(task.get("work"), dict):
         return False
+    owner = str(task.get("owner") or "").strip()
+    if not owner:
+        return False
     with ACTIVE_IP_TASK_LOCK:
         if task_key in ACTIVE_IP_TASKS:
             return False
+        active_owner_task = ACTIVE_IP_TASK_OWNERS.get(owner)
+        if active_owner_task and active_owner_task != task_key:
+            return False
         ACTIVE_IP_TASKS.add(task_key)
+        ACTIVE_IP_TASK_OWNERS[owner] = task_key
     Thread(
         target=_run_tracked_ip_image_task,
         args=(task_key, dict(task)),
@@ -449,6 +484,7 @@ def _resume_ip_image_tasks() -> None:
             for task_key, task in items.items()
             if task.get("status") in {"queued", "running"} and isinstance(task.get("work"), dict)
         ]
+    resumable.sort(key=lambda item: (str(item[1].get("owner") or ""), _queued_task_sort_key(item)))
     for task_key, task in resumable:
         _ensure_ip_task_worker(task_key, task)
 
