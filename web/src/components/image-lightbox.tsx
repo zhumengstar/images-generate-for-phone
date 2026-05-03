@@ -123,12 +123,12 @@ export function ImageLightbox({
 
           {/* image */}
           <div
-            className="flex max-h-[90vh] max-w-[90vw] items-center justify-center"
+            className="flex max-h-[78dvh] max-w-[86vw] items-center justify-center sm:max-h-[90vh] sm:max-w-[90vw]"
           >
             <img
               src={current.src}
               alt=""
-              className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+              className="max-h-[78dvh] max-w-[86vw] rounded-lg object-contain sm:max-h-[90vh] sm:max-w-[90vw]"
               onClick={(e) => e.stopPropagation()}
               draggable={false}
             />
