@@ -1,6 +1,7 @@
 "use client";
 import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Sparkles, X } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useState, type RefObject } from "react";
+import * as PopoverPrimitive from "@radix-ui/react-popover";
 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,9 +48,6 @@ export function ImageComposer({
   onSubmit,
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
-  const [sizeMenuStyle, setSizeMenuStyle] = useState<CSSProperties>({});
-  const sizeMenuRef = useRef<HTMLDivElement>(null);
-  const sizeButtonRef = useRef<HTMLButtonElement>(null);
   const imageSizeOptions = [
     { value: "", label: "未指定" },
     { value: "1:1", label: "1:1 (正方形)" },
@@ -65,43 +63,6 @@ export function ImageComposer({
     { value: "9:21", label: "9:21 (超高竖版)" },
   ];
   const imageSizeLabel = imageSizeOptions.find((option) => option.value === imageSize)?.label || "未指定";
-
-  const updateSizeMenuPosition = () => {
-    const rect = sizeButtonRef.current?.getBoundingClientRect();
-    if (!rect) {
-      return;
-    }
-    const isSmallScreen = window.innerWidth < 640;
-    const menuWidth = isSmallScreen ? window.innerWidth - 32 : 190;
-    const preferredLeft = rect.left + rect.width / 2 - menuWidth / 2;
-    const left = isSmallScreen ? 16 : Math.max(12, Math.min(preferredLeft, window.innerWidth - menuWidth - 12));
-    setSizeMenuStyle({
-      left,
-      width: menuWidth,
-      bottom: Math.max(12, window.innerHeight - rect.top + 8),
-      maxHeight: Math.min(window.innerHeight * 0.45, Math.max(180, rect.top - 24)),
-    });
-  };
-
-  useEffect(() => {
-    if (!isSizeMenuOpen) {
-      return;
-    }
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!sizeMenuRef.current?.contains(event.target as Node)) {
-        setIsSizeMenuOpen(false);
-      }
-    };
-    updateSizeMenuPosition();
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("resize", updateSizeMenuPosition);
-    window.addEventListener("scroll", updateSizeMenuPosition, true);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("resize", updateSizeMenuPosition);
-      window.removeEventListener("scroll", updateSizeMenuPosition, true);
-    };
-  }, [isSizeMenuOpen]);
 
   return (
     <div className="relative z-20 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 backdrop-blur sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0">
@@ -221,29 +182,27 @@ export function ImageComposer({
                       className="h-7 w-[40px] border-0 bg-transparent px-0 text-center text-xs font-medium text-stone-700 shadow-none focus-visible:ring-0 sm:h-8 sm:w-[64px] sm:text-sm"
                     />
                   </div>
-                  <div
-                    ref={sizeMenuRef}
-                    className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]"
-                  >
-                    <span className="font-medium text-stone-700 sm:text-sm">比例</span>
-                    <button
-                      ref={sizeButtonRef}
-                      type="button"
-                      className="flex h-7 w-[78px] items-center justify-between bg-transparent text-left text-xs font-bold text-stone-700 min-[390px]:w-[96px] sm:h-8 sm:w-[132px]"
-                      onClick={() => {
-                        if (!isSizeMenuOpen) {
-                          updateSizeMenuPosition();
-                        }
-                        setIsSizeMenuOpen((open) => !open);
-                      }}
-                    >
-                      <span className="truncate">{imageSizeLabel}</span>
-                      <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
-                    </button>
-                    {isSizeMenuOpen ? (
-                      <div
-                        className="fixed z-[100] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
-                        style={sizeMenuStyle}
+                  <PopoverPrimitive.Root open={isSizeMenuOpen} onOpenChange={setIsSizeMenuOpen}>
+                    <div className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]">
+                      <span className="font-medium text-stone-700 sm:text-sm">比例</span>
+                      <PopoverPrimitive.Trigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-7 w-[78px] items-center justify-between bg-transparent text-left text-xs font-bold text-stone-700 min-[390px]:w-[96px] sm:h-8 sm:w-[132px]"
+                        >
+                          <span className="truncate">{imageSizeLabel}</span>
+                          <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
+                        </button>
+                      </PopoverPrimitive.Trigger>
+                    </div>
+                    <PopoverPrimitive.Portal>
+                      <PopoverPrimitive.Content
+                        side="top"
+                        align="center"
+                        sideOffset={10}
+                        collisionPadding={12}
+                        className="z-[100] max-h-[min(48dvh,420px)] w-[min(calc(100vw-2rem),210px)] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
+                        onOpenAutoFocus={(event) => event.preventDefault()}
                       >
                         {imageSizeOptions.map((option) => {
                           const active = option.value === imageSize;
@@ -265,9 +224,9 @@ export function ImageComposer({
                             </button>
                           );
                         })}
-                      </div>
-                    ) : null}
-                  </div>
+                      </PopoverPrimitive.Content>
+                    </PopoverPrimitive.Portal>
+                  </PopoverPrimitive.Root>
 
                 </div>
 
