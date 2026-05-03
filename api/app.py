@@ -948,7 +948,7 @@ def create_app() -> FastAPI:
             data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def serve_web(full_path: str):
         asset = resolve_web_asset(full_path)
         if asset is not None:
