@@ -1095,7 +1095,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      <section className="mx-auto grid h-[calc(100dvh-6.25rem)] min-h-0 w-full max-w-[1380px] grid-cols-1 gap-2 px-0 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:h-[calc(100dvh-5rem)] sm:gap-3 sm:px-3 sm:pb-6 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <section className="mx-auto grid h-[calc(100dvh-3rem)] min-h-0 w-full max-w-[1380px] grid-cols-1 gap-1 px-0 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] sm:h-[calc(100dvh-5rem)] sm:gap-3 sm:px-3 sm:pb-6 lg:grid-cols-[240px_minmax(0,1fr)]">
         <div className="hidden h-full min-h-0 border-r border-stone-200/70 pr-3 lg:block">
           <ImageSidebar
             conversations={conversations}
@@ -1110,7 +1110,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         </div>
 
         <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-          <DialogContent className="flex h-[min(82dvh,760px)] w-[92vw] max-w-[460px] flex-col overflow-hidden rounded-[32px] border-white/80 bg-white p-0 shadow-[0_32px_110px_-38px_rgba(15,23,42,0.45)] sm:rounded-[36px]">
+          <DialogContent className="flex h-[min(88dvh,760px)] w-[94vw] max-w-[460px] flex-col overflow-hidden rounded-3xl border-white/80 bg-white p-0 shadow-[0_32px_110px_-38px_rgba(15,23,42,0.45)] sm:h-[min(82dvh,760px)] sm:rounded-[36px]">
             <DialogHeader className="px-6 pt-7 pb-4 sm:px-8">
               <DialogTitle className="flex items-center gap-2 text-xl font-bold tracking-tight">
                 <History className="size-5" />
@@ -1139,37 +1139,37 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </DialogContent>
         </Dialog>
 
-        <div className="flex min-h-0 flex-col gap-2 sm:gap-4">
-          <div className="flex flex-wrap gap-1.5 rounded-2xl border border-stone-200/70 bg-white/85 px-2 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:gap-2 sm:px-4 sm:text-xs">
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
+        <div className="flex min-h-0 flex-col gap-1 sm:gap-4">
+          <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
+            <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
               <span className="shrink-0 font-medium text-stone-700">User</span>
               <span className="min-w-0 truncate font-mono">{ipQuota?.user_id || "--"}</span>
             </span>
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
+            <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
               <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
               <span className="min-w-0 truncate font-mono">{ipQuota?.ip || "读取中"}</span>
             </span>
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1">
+            <span className="hidden max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:inline-flex">
               <span className="shrink-0 font-medium text-stone-700">指纹</span>
               <span className="min-w-0 truncate font-mono">{ipQuota?.fingerprint.slice(0, 12) || "--"}</span>
             </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
               <span className="font-medium">剩余额度</span>
               <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
             </span>
           </div>
 
-          <div className="flex items-center justify-between gap-2 px-1 lg:hidden">
+          <div className="flex items-center justify-between gap-2 px-3 py-1 lg:hidden">
             <Button
               variant="outline"
-              className="h-10 flex-1 rounded-2xl border-stone-200 bg-white/90 text-stone-700 shadow-sm"
+              className="h-9 flex-1 rounded-xl border-stone-200 bg-white text-stone-700 shadow-sm"
               onClick={() => setIsHistoryOpen(true)}
             >
               <History className="mr-2 size-4" />
               历史记录 ({conversations.length})
             </Button>
             <Button
-              className="h-10 rounded-2xl bg-stone-950 text-white shadow-sm"
+              className="h-9 rounded-xl bg-stone-950 text-white shadow-sm"
               onClick={handleCreateDraft}
             >
               <Plus className="size-4" />
@@ -1177,7 +1177,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             </Button>
             <Button
               variant="outline"
-              className="h-10 rounded-2xl border-stone-200 bg-white/85 px-3 text-stone-600 shadow-sm"
+              className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-600 shadow-sm"
               onClick={openClearHistoryConfirm}
               disabled={conversations.length === 0}
             >
@@ -1187,7 +1187,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
           <div
             ref={resultsViewportRef}
-            className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-1 py-2 sm:px-4 sm:py-4"
+            className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-2 sm:px-4 sm:py-4"
           >
             <ImageResults
               selectedConversation={selectedConversation}

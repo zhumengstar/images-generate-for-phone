@@ -52,8 +52,8 @@ export function TopNav() {
   const roleLabel = session.role === "admin" ? "管理员" : "普通用户";
 
   return (
-    <header className="border-b border-stone-100/50">
-      <div className="flex min-h-12 flex-col gap-1 px-3 py-2 sm:h-12 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6 sm:py-0">
+    <header className="shrink-0 border-b border-stone-100/70 bg-white/90 backdrop-blur sm:bg-transparent">
+      <div className="flex h-12 items-center justify-between gap-2 px-3 sm:h-12 sm:gap-3 sm:px-6">
         <div className="flex items-center justify-between gap-2 sm:justify-start sm:gap-3">
           <Link
             href="/image"
@@ -72,7 +72,7 @@ export function TopNav() {
             <span className="hidden md:inline">GitHub</span>
           </a>
         </div>
-        <nav className="hide-scrollbar -mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1 sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">
+        <nav className="hide-scrollbar flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">
           {navItems.map((item) => {
             const active = pathname === item.href;
             return (

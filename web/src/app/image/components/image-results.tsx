@@ -113,10 +113,10 @@ export function ImageResults({
 
   if (!selectedConversation) {
     return (
-      <div className="flex h-full min-h-[260px] items-center justify-center text-center sm:min-h-[420px]">
+      <div className="flex h-full min-h-[220px] items-center justify-center text-center sm:min-h-[420px]">
         <div className="w-full max-w-4xl">
           <h1
-            className="text-2xl font-semibold tracking-tight text-stone-950 sm:text-3xl md:text-5xl"
+            className="text-[26px] font-semibold tracking-tight text-stone-950 sm:text-3xl md:text-5xl"
             style={{
               fontFamily: '"Palatino Linotype","Book Antiqua","URW Palladio L","Times New Roman",serif',
             }}
@@ -137,7 +137,7 @@ export function ImageResults({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 sm:gap-8">
+    <div className="mx-auto flex w-full max-w-[980px] flex-col gap-5 pb-1 sm:gap-8 sm:pb-0">
       {selectedConversation.turns.map((turn, turnIndex) => {
         const successfulTurnImages = turn.images.flatMap((image) => {
           const src = image.status === "success" ? getStoredImageSrc(image) : "";
@@ -156,23 +156,23 @@ export function ImageResults({
         return (
           <div key={turn.id} className="flex flex-col gap-3 sm:gap-4">
             <div className="flex justify-end">
-              <div className="max-w-[90%] px-1 py-1 text-[14px] leading-6 text-stone-900 sm:max-w-[82%] sm:text-[15px] sm:leading-7">
+              <div className="max-w-[94%] rounded-2xl bg-white px-3 py-2 text-[14px] leading-6 text-stone-900 shadow-sm ring-1 ring-stone-200/70 sm:max-w-[82%] sm:bg-transparent sm:px-1 sm:py-1 sm:text-[15px] sm:leading-7 sm:shadow-none sm:ring-0">
                 <div className="mb-1.5 flex flex-wrap justify-end gap-2 text-[11px] text-stone-400 sm:mb-2">
                   <span>第 {turnIndex + 1} 轮</span>
                   <span>{turn.mode === "edit" ? "图片编辑" : "图片生成"}</span>
                   <span>{getTurnStatusLabel(turn.status)}</span>
                   <span>{formatConversationTime(turn.createdAt)}</span>
                 </div>
-                <div className="text-right">{turn.prompt}</div>
+                <div className="break-words text-right">{turn.prompt}</div>
               </div>
             </div>
 
             <div className="flex justify-start">
-              <div className="w-full p-1">
+              <div className="w-full p-0 sm:p-1">
                 {turn.referenceImages.length > 0 ? (
                   <div className="mb-4 flex flex-col items-end">
                     <div className="mb-3 text-xs font-medium text-stone-500">本轮参考图</div>
-                    <div className="flex flex-wrap justify-end gap-3">
+                    <div className="flex flex-wrap justify-end gap-2 sm:gap-3">
                       {turn.referenceImages.map((image, index) => (
                         <div key={`${turn.id}-${image.name}-${index}`} className="flex flex-col items-end gap-2">
                           <button
@@ -186,7 +186,7 @@ export function ImageResults({
                                 index,
                               )
                             }
-                            className="group relative h-24 w-24 overflow-hidden border border-stone-200/80 bg-stone-100/60 text-left transition hover:border-stone-300"
+                            className="group relative h-20 w-20 overflow-hidden rounded-2xl border border-stone-200/80 bg-stone-100/60 text-left transition hover:border-stone-300 sm:h-24 sm:w-24 sm:rounded-none"
                             aria-label={`预览参考图 ${image.name || index + 1}`}
                           >
                             <img
@@ -221,7 +221,7 @@ export function ImageResults({
                       return (
                         <div
                           key={image.id}
-                          className="break-inside-avoid overflow-hidden"
+                          className="break-inside-avoid overflow-hidden rounded-2xl border border-stone-200/75 bg-white shadow-sm sm:rounded-none sm:border-0 sm:bg-transparent sm:shadow-none"
                         >
                           <button
                             type="button"
@@ -242,7 +242,7 @@ export function ImageResults({
                               }}
                             />
                           </button>
-                          <div className="px-3 py-3">
+                          <div className="px-3 py-2.5 sm:py-3">
                             <div className="min-w-0 text-xs text-stone-500">
                               <span>结果 {index + 1}</span>
                               {imageMeta ? <span className="ml-2 text-stone-400">{imageMeta}</span> : null}

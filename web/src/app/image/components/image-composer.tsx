@@ -68,9 +68,9 @@ export function ImageComposer({
   }, [isSizeMenuOpen]);
 
   return (
-    <div className="shrink-0 flex justify-center px-1 sm:px-0">
+    <div className="shrink-0 flex justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 backdrop-blur sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0">
       <div style={{ width: "min(980px, 100%)" }}>
-        <div className="rounded-[24px] border border-stone-200 bg-white shadow-[0_14px_60px_-42px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:shadow-none">
+        <div className="overflow-hidden rounded-[22px] border border-stone-200 bg-white shadow-[0_14px_60px_-42px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:shadow-none">
           <input
             ref={fileInputRef}
             type="file"
@@ -98,11 +98,11 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="min-h-[82px] resize-none rounded-[24px] border-0 bg-transparent px-4 pt-4 pb-2 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:leading-7"
+              className="max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:text-[15px] sm:leading-7"
             />
 
             {referenceImages.length > 0 ? (
-              <div className="flex gap-2 overflow-x-auto px-3 pb-2 sm:px-6">
+              <div className="hide-scrollbar flex gap-2 overflow-x-auto px-3 pb-2 sm:px-6">
                 {referenceImages.map((image, index) => (
                   <div
                     key={`${image.name}-${index}`}
@@ -131,7 +131,7 @@ export function ImageComposer({
                   <button
                     type="button"
                     className={cn(
-                      "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium transition sm:px-3 sm:text-xs",
+                      "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[11px] font-medium transition sm:px-3 sm:text-xs",
                       referenceImages.length > 0
                         ? "border-stone-900 bg-stone-950 text-white"
                         : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50",
@@ -142,16 +142,16 @@ export function ImageComposer({
                     <ImagePlus className="size-3.5" />
                     {referenceImages.length > 0 ? referenceImages.length : ""}
                   </button>
-                  <div className="shrink-0 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
+                  <div className="shrink-0 rounded-full bg-stone-100 px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
                     <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
                   </div>
                   {activeTaskCount > 0 && (
-                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
+                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1.5 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />
                       {activeTaskCount}<span className="hidden sm:inline"> 个任务处理中</span>
                     </div>
                   )}
-                  <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
+                  <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
                     <span className="text-[11px] font-medium text-stone-700 sm:text-sm">张数</span>
                     <Input
                       type="number"
@@ -166,7 +166,7 @@ export function ImageComposer({
                   </div>
                   <div
                     ref={sizeMenuRef}
-                    className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]"
+                    className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]"
                   >
                     <span className="font-medium text-stone-700 sm:text-sm">比例</span>
                     <button
@@ -209,7 +209,7 @@ export function ImageComposer({
                   type="button"
                   onClick={() => void onSubmit()}
                   disabled={!prompt.trim()}
-                  className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-stone-950 text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 sm:size-11"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-stone-950 text-white shadow-sm transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 sm:size-11"
                   aria-label="生成图片"
                 >
                   <ArrowUp className="size-3.5 sm:size-4" />
