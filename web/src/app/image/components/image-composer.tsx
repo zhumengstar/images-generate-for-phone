@@ -51,10 +51,16 @@ export function ImageComposer({
   const imageSizeOptions = [
     { value: "", label: "未指定" },
     { value: "1:1", label: "1:1 (正方形)" },
+    { value: "21:9", label: "21:9 (超宽横版)" },
     { value: "16:9", label: "16:9 (横版)" },
+    { value: "3:2", label: "3:2 (横版)" },
     { value: "4:3", label: "4:3 (横版)" },
+    { value: "5:4", label: "5:4 (横版)" },
+    { value: "4:5", label: "4:5 (竖版)" },
     { value: "3:4", label: "3:4 (竖版)" },
+    { value: "2:3", label: "2:3 (竖版)" },
     { value: "9:16", label: "9:16 (竖版)" },
+    { value: "9:21", label: "9:21 (超高竖版)" },
   ];
   const imageSizeLabel = imageSizeOptions.find((option) => option.value === imageSize)?.label || "未指定";
 
@@ -104,7 +110,10 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7"
+              className={cn(
+                "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
+                referenceImages.length > 0 && "min-h-[132px] pb-[76px] sm:pb-20",
+              )}
             />
             <button
               type="button"
@@ -121,23 +130,23 @@ export function ImageComposer({
             </button>
 
             {referenceImages.length > 0 ? (
-              <div className="hide-scrollbar flex gap-2 overflow-x-auto px-3 pb-2 sm:px-6">
+              <div className="hide-scrollbar absolute inset-x-3 bottom-[58px] z-10 flex gap-1.5 overflow-x-auto pr-12 sm:inset-x-6 sm:bottom-[68px] sm:pr-6">
                 {referenceImages.map((image, index) => (
                   <div
                     key={`${image.name}-${index}`}
-                    className="group relative size-14 shrink-0 overflow-hidden rounded-xl border border-stone-200 bg-stone-100 sm:size-16"
+                    className="group relative size-11 shrink-0 overflow-hidden rounded-xl border border-white bg-stone-100 shadow-sm ring-1 ring-stone-200/80 sm:size-12"
                   >
                     <img src={image.dataUrl} alt={image.name || `参考图 ${index + 1}`} className="h-full w-full object-cover" />
                     <button
                       type="button"
-                      className="absolute right-1 top-1 inline-flex size-5 items-center justify-center rounded-full bg-black/70 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"
+                      className="absolute right-0.5 top-0.5 inline-flex size-4 items-center justify-center rounded-full bg-black/70 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"
                       onClick={(event) => {
                         event.stopPropagation();
                         onRemoveReferenceImage(index);
                       }}
                       aria-label="移除参考图"
                     >
-                      <X className="size-3" />
+                      <X className="size-2.5" />
                     </button>
                   </div>
                 ))}

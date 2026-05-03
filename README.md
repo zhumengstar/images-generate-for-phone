@@ -25,7 +25,7 @@
 已发布镜像支持 `linux/amd64` 与 `linux/arm64`，在 x86 服务器和 Apple Silicon / ARM Linux 设备上都会自动拉取匹配架构的版本。
 
 ```bash
-git clone git@github.com:basketikun/chatgpt2api.git
+git clone git@github.com:zhumengstar/images-generate-for-phone.git
 # 按需编辑 config.json 的密钥和 `refresh_account_interval_minute`
 # 也可以直接通过环境变量 CHATGPT2API_AUTH_KEY 覆盖 auth-key
 docker compose up -d
@@ -283,10 +283,10 @@ curl http://localhost:8000/v1/responses \
 
 感谢所有为本项目做出贡献的开发者：
 
-<a href="https://github.com/basketikun/chatgpt2api/graphs/contributors">
-  <img alt="Contributors" src="https://contrib.rocks/image?repo=basketikun/chatgpt2api" />
+<a href="https://github.com/zhumengstar/images-generate-for-phone/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=zhumengstar/images-generate-for-phone" />
 </a>
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=basketikun/chatgpt2api&type=date&legend=top-left)](https://www.star-history.com/?repos=basketikun%2Fchatgpt2api&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/chart?repos=zhumengstar/images-generate-for-phone&type=date&legend=top-left)](https://www.star-history.com/?repos=zhumengstar%2Fimages-generate-for-phone&type=date&legend=top-left)

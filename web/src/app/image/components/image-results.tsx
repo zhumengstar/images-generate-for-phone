@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
 
-import { cn } from "@/lib/utils";
 import type { ImageConversation, ImageTurnStatus, StoredImage } from "@/store/image-conversations";
 
 export type ImageLightboxItem = {
@@ -40,6 +39,19 @@ function base64ToObjectUrl(base64: string) {
     chunks.push(bytes);
   }
   return URL.createObjectURL(new Blob(chunks, { type: "image/png" }));
+}
+
+function getImageAspectStyle(size: string): CSSProperties {
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(size.trim());
+  if (!match) {
+    return { aspectRatio: "1 / 1" };
+  }
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { aspectRatio: "1 / 1" };
+  }
+  return { aspectRatio: `${width} / ${height}` };
 }
 
 function StoredImageElement({
@@ -256,15 +268,8 @@ export function ImageResults({
                       return (
                         <div
                           key={image.id}
-                          className={cn(
-                            "break-inside-avoid overflow-hidden rounded-2xl border border-rose-200 bg-rose-50 sm:rounded-none",
-                            turn.size === "1:1" && "sm:aspect-square",
-                            turn.size === "16:9" && "sm:aspect-video",
-                            turn.size === "9:16" && "sm:aspect-[9/16]",
-                            turn.size === "4:3" && "sm:aspect-[4/3]",
-                            turn.size === "3:4" && "sm:aspect-[3/4]",
-                            !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "sm:aspect-square",
-                          )}
+                          className="break-inside-avoid overflow-hidden rounded-2xl border border-rose-200 bg-rose-50 sm:rounded-none"
+                          style={getImageAspectStyle(turn.size)}
                         >
                           <div className="flex h-full min-h-16 flex-col items-center justify-center gap-3 px-4 py-4 text-center text-sm leading-6 text-rose-600 sm:px-6 sm:py-8">
                             <div>{image.error || "生成失败"}</div>
@@ -284,15 +289,8 @@ export function ImageResults({
                     return (
                       <div
                         key={image.id}
-                        className={cn(
-                          "break-inside-avoid overflow-hidden border border-stone-200/80 bg-stone-100/80",
-                          turn.size === "1:1" && "aspect-square",
-                          turn.size === "16:9" && "aspect-video",
-                          turn.size === "9:16" && "aspect-[9/16]",
-                          turn.size === "4:3" && "aspect-[4/3]",
-                          turn.size === "3:4" && "aspect-[3/4]",
-                          !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "aspect-square",
-                        )}
+                        className="break-inside-avoid overflow-hidden border border-stone-200/80 bg-stone-100/80"
+                        style={getImageAspectStyle(turn.size)}
                       >
                         <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-8 text-center text-stone-500">
                           <div className="rounded-full bg-white p-3 shadow-sm">
