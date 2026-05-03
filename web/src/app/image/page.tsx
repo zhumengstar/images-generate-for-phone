@@ -1095,7 +1095,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      <section className="mx-auto grid h-[calc(100dvh-3rem)] min-h-0 w-full max-w-[1380px] grid-cols-1 gap-1 px-0 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] sm:h-[calc(100dvh-5rem)] sm:gap-3 sm:px-3 sm:pb-6 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <section className="mx-auto grid h-[calc(100dvh-3rem)] min-h-0 w-full max-w-[1380px] grid-cols-1 gap-1 overflow-hidden px-0 pb-[calc(env(safe-area-inset-bottom)+0.35rem)] sm:h-[calc(100dvh-5rem)] sm:gap-3 sm:px-3 sm:pb-6 lg:grid-cols-[240px_minmax(0,1fr)]">
         <div className="hidden h-full min-h-0 border-r border-stone-200/70 pr-3 lg:block">
           <ImageSidebar
             conversations={conversations}
@@ -1139,55 +1139,57 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </DialogContent>
         </Dialog>
 
-        <div className="flex min-h-0 flex-col gap-1 sm:gap-4">
-          <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
-            <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
-              <span className="shrink-0 font-medium text-stone-700">User</span>
-              <span className="min-w-0 truncate font-mono">{ipQuota?.user_id || "--"}</span>
-            </span>
-            <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
-              <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
-              <span className="min-w-0 truncate font-mono">{ipQuota?.ip || "读取中"}</span>
-            </span>
-            <span className="hidden max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:inline-flex">
-              <span className="shrink-0 font-medium text-stone-700">指纹</span>
-              <span className="min-w-0 truncate font-mono">{ipQuota?.fingerprint.slice(0, 12) || "--"}</span>
-            </span>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
-              <span className="font-medium">剩余额度</span>
-              <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
-            </span>
-          </div>
+        <div className="flex h-full min-h-0 flex-col overflow-hidden sm:gap-4">
+          <div className="shrink-0 bg-stone-50 sm:bg-transparent">
+            <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
+              <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
+                <span className="shrink-0 font-medium text-stone-700">User</span>
+                <span className="min-w-0 truncate font-mono">{ipQuota?.user_id || "--"}</span>
+              </span>
+              <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
+                <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
+                <span className="min-w-0 truncate font-mono">{ipQuota?.ip || "读取中"}</span>
+              </span>
+              <span className="hidden max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:inline-flex">
+                <span className="shrink-0 font-medium text-stone-700">指纹</span>
+                <span className="min-w-0 truncate font-mono">{ipQuota?.fingerprint.slice(0, 12) || "--"}</span>
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
+                <span className="font-medium">剩余额度</span>
+                <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
+              </span>
+            </div>
 
-          <div className="flex items-center justify-between gap-2 px-3 py-1 lg:hidden">
-            <Button
-              variant="outline"
-              className="h-9 flex-1 rounded-xl border-stone-200 bg-white text-stone-700 shadow-sm"
-              onClick={() => setIsHistoryOpen(true)}
-            >
-              <History className="mr-2 size-4" />
-              历史记录 ({conversations.length})
-            </Button>
-            <Button
-              className="h-9 rounded-xl bg-stone-950 text-white shadow-sm"
-              onClick={handleCreateDraft}
-            >
-              <Plus className="size-4" />
-              新建
-            </Button>
-            <Button
-              variant="outline"
-              className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-600 shadow-sm"
-              onClick={openClearHistoryConfirm}
-              disabled={conversations.length === 0}
-            >
-              <Trash2 className="size-4" />
-            </Button>
+            <div className="flex items-center justify-between gap-2 px-3 py-1 lg:hidden">
+              <Button
+                variant="outline"
+                className="h-9 flex-1 rounded-xl border-stone-200 bg-white text-stone-700 shadow-sm"
+                onClick={() => setIsHistoryOpen(true)}
+              >
+                <History className="mr-2 size-4" />
+                历史记录 ({conversations.length})
+              </Button>
+              <Button
+                className="h-9 rounded-xl bg-stone-950 text-white shadow-sm"
+                onClick={handleCreateDraft}
+              >
+                <Plus className="size-4" />
+                新建
+              </Button>
+              <Button
+                variant="outline"
+                className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-600 shadow-sm"
+                onClick={openClearHistoryConfirm}
+                disabled={conversations.length === 0}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
           </div>
 
           <div
             ref={resultsViewportRef}
-            className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-3 py-2 sm:px-4 sm:py-4"
+            className="hide-scrollbar min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-3 py-2 sm:px-4 sm:py-4"
           >
             <ImageResults
               selectedConversation={selectedConversation}
