@@ -241,6 +241,8 @@ function isRecoverableTaskSyncError(error: unknown) {
     message.includes("aborted") ||
     message.includes("load failed") ||
     message.includes("请求失败") ||
+    message.includes("创建编辑任务失败") ||
+    message.includes("创建生成任务失败") ||
     message.includes("读取图片任务失败") ||
     message.includes("读取图像任务失败")
   );
@@ -980,6 +982,49 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               await updateGeneratedImage(generatedImage);
               return generatedImage;
             } catch (error) {
+              const recoveredTaskList = effectiveTaskId
+                ? await fetchImageTasks([effectiveTaskId]).catch(() => null)
+                : null;
+              const recoveredTask = recoveredTaskList?.items.find((item) => item.id === effectiveTaskId);
+              if (recoveredTask?.status === "success") {
+                const recoveredResponse: ImageResponse = {
+                  created: Date.now(),
+                  data: recoveredTask.data || [],
+                };
+                let recoveredImage: ImageResponse["data"][number] | undefined;
+                try {
+                  recoveredImage = recoveredResponse.data?.[0]
+                    ? await recallImageResult(recoveredResponse.data[0])
+                    : undefined;
+                  if (!recoveredImage?.b64_json && !recoveredImage?.url) {
+                    throw new Error("接口没有返回图片数据");
+                  }
+                } catch (recallError) {
+                  await refundIpQuota(1).catch(() => null);
+                  throw recallError;
+                }
+                const generatedImage = {
+                  ...image,
+                  taskId: effectiveTaskId,
+                  status: "success" as const,
+                  b64_json: recoveredImage.b64_json,
+                  url: undefined,
+                  revised_prompt: recoveredImage.revised_prompt,
+                  error: undefined,
+                };
+                await updateGeneratedImage(generatedImage);
+                return generatedImage;
+              }
+              if (recoveredTask?.status === "queued" || recoveredTask?.status === "running") {
+                const pendingImage = {
+                  ...image,
+                  taskId: effectiveTaskId,
+                  status: "loading" as const,
+                  error: undefined,
+                };
+                await updateGeneratedImage(pendingImage);
+                return pendingImage;
+              }
               const message = error instanceof Error ? error.message : "生成图片失败";
               if (image.taskId && isRecoverableTaskSyncError(error)) {
                 const pendingImage = {

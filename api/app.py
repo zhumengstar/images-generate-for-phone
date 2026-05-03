@@ -307,7 +307,7 @@ def _load_ip_tasks() -> dict[str, dict[str, Any]]:
     try:
         data = json.loads(IP_IMAGE_TASKS_PATH.read_text(encoding="utf-8"))
     except Exception:
-        return {}
+        data = _load_partial_ip_tasks()
     raw_items = data.get("tasks") if isinstance(data, dict) else data
     if not isinstance(raw_items, list):
         return {}
@@ -340,13 +340,44 @@ def _load_ip_tasks() -> dict[str, dict[str, Any]]:
     return items
 
 
+def _load_partial_ip_tasks() -> dict[str, Any]:
+    try:
+        content = IP_IMAGE_TASKS_PATH.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return {"tasks": []}
+    start = content.find("[")
+    if start < 0:
+        return {"tasks": []}
+    decoder = json.JSONDecoder()
+    index = start + 1
+    tasks: list[Any] = []
+    while index < len(content):
+        while index < len(content) and content[index] in " \r\n\t,":
+            index += 1
+        if index >= len(content) or content[index] == "]":
+            break
+        try:
+            task, index = decoder.raw_decode(content, index)
+        except Exception:
+            break
+        if isinstance(task, dict):
+            tasks.append(task)
+    return {"tasks": tasks}
+
+
 def _save_ip_tasks(items: dict[str, dict[str, Any]]) -> None:
     IP_IMAGE_TASKS_PATH.parent.mkdir(parents=True, exist_ok=True)
     sorted_items = sorted(items.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
-    IP_IMAGE_TASKS_PATH.write_text(
-        json.dumps({"tasks": sorted_items[:1000]}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    content = json.dumps({"tasks": sorted_items[:1000]}, ensure_ascii=False, indent=2) + "\n"
+    tmp_path = IP_IMAGE_TASKS_PATH.with_name(f"{IP_IMAGE_TASKS_PATH.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        os.replace(tmp_path, IP_IMAGE_TASKS_PATH)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _update_ip_task(task_key: str, **updates: Any) -> None:
