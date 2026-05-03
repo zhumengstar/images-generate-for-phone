@@ -298,7 +298,9 @@ async function syncConversationImageTasks(items: ImageConversation[]) {
     new Set(
       items.flatMap((conversation) =>
         conversation.turns.flatMap((turn) =>
-          turn.images.flatMap((image) => (image.status === "loading" && image.taskId ? [image.taskId] : [])),
+          turn.images.flatMap((image) =>
+            image.status !== "success" && image.taskId ? [image.taskId] : [],
+          ),
         ),
       ),
     ),
@@ -319,7 +321,7 @@ async function syncConversationImageTasks(items: ImageConversation[]) {
     const turns = conversation.turns.map((turn) => {
       let turnChanged = false;
       const images = turn.images.map((image) => {
-        if (image.status !== "loading" || !image.taskId) {
+        if (image.status === "success" || !image.taskId) {
           return image;
         }
         const task = taskMap.get(image.taskId);
