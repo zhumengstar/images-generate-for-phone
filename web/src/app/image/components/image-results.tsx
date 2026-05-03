@@ -302,7 +302,9 @@ export function ImageResults({
                               <LoaderCircle className="size-5 animate-spin" />
                             )}
                           </div>
-                          <p className="text-sm">{turn.status === "queued" ? "已加入当前对话队列..." : "正在处理图片..."}</p>
+                          <p className="text-sm">
+                            {turn.status === "queued" ? "已加入当前对话队列..." : "正在后台处理图片，刷新不会中断..."}
+                          </p>
                         </div>
                       </div>
                     );

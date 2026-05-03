@@ -227,13 +227,37 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function waitForImageTask(taskId: string, timeoutMs = 180000) {
+function getErrorMessage(error: unknown, fallback = "生成图片失败") {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function isRecoverableTaskSyncError(error: unknown) {
+  const message = getErrorMessage(error, "").toLowerCase();
+  return (
+    !message ||
+    message.includes("failed to fetch") ||
+    message.includes("network") ||
+    message.includes("timeout") ||
+    message.includes("aborted") ||
+    message.includes("load failed") ||
+    message.includes("请求失败") ||
+    message.includes("读取图片任务失败") ||
+    message.includes("读取图像任务失败")
+  );
+}
+
+async function waitForImageTask(taskId: string, timeoutMs = 600000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const taskList = await fetchImageTasks([taskId]);
-    const task = taskList.items.find((item) => item.id === taskId);
-    if (task?.status === "success" || task?.status === "error") {
-      return task;
+    try {
+      const taskList = await fetchImageTasks([taskId]);
+      const task = taskList.items.find((item) => item.id === taskId);
+      if (task?.status === "success" || task?.status === "error") {
+        return task;
+      }
+    } catch {
+      // A refresh, tab restore, or brief network hiccup should not turn a
+      // server-side background task into a permanent failed image.
     }
     await sleep(1500);
   }
@@ -386,6 +410,7 @@ async function recoverConversationHistory(items: ImageConversation[]) {
 
 function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const didLoadQuotaRef = useRef(false);
+  const didNotifyRestoredTasksRef = useRef(false);
   const conversationsRef = useRef<ImageConversation[]>([]);
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -465,6 +490,19 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
         conversationsRef.current = normalizedItems;
         setConversations(normalizedItems);
+        if (
+          !didNotifyRestoredTasksRef.current &&
+          normalizedItems.some((conversation) =>
+            conversation.turns.some(
+              (turn) =>
+                (turn.status === "queued" || turn.status === "generating") &&
+                turn.images.some((image) => image.status === "loading" && image.taskId),
+            ),
+          )
+        ) {
+          didNotifyRestoredTasksRef.current = true;
+          toast.info("检测到未完成任务，已继续同步结果；刷新页面不会中断后台生成。");
+        }
         const storedConversationId =
           typeof window !== "undefined"
             ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) ||
@@ -943,6 +981,16 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               return generatedImage;
             } catch (error) {
               const message = error instanceof Error ? error.message : "生成图片失败";
+              if (image.taskId && isRecoverableTaskSyncError(error)) {
+                const pendingImage = {
+                  ...image,
+                  taskId: effectiveTaskId,
+                  status: "loading" as const,
+                  error: undefined,
+                };
+                await updateGeneratedImage(pendingImage);
+                return pendingImage;
+              }
               const generatedImage = {
                 ...image,
                 taskId: effectiveTaskId,
@@ -1085,11 +1133,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
     const targetStats = getImageConversationStats(baseConversation);
     if (targetStats.running > 0 || targetStats.queued > 1) {
-      toast.success("已加入当前对话队列");
+      toast.success("已加入后台队列，刷新页面不会中断任务");
     } else if (!targetConversation) {
-      toast.success("已创建新对话并开始处理");
+      toast.success("已提交后台处理，刷新页面不会中断任务");
     } else {
-      toast.success("已发送到当前对话");
+      toast.success("已发送到当前对话，后台会继续生成");
     }
   };
 
