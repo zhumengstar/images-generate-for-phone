@@ -32,7 +32,10 @@ IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "http://165.154.254.130
 IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
 IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
 IMAGE_EDIT_MAX_SIDE = int(os.getenv("IMAGE_PROXY_EDIT_MAX_SIDE", "2048"))
-PROMPT_POLISH_MODEL = os.getenv("IMAGE_PROMPT_POLISH_MODEL", "auto")
+PROMPT_POLISH_BASE_URL = os.getenv("IMAGE_PROMPT_POLISH_BASE_URL", f"{IMAGE_PROXY_BASE_URL}/v1").rstrip("/")
+PROMPT_POLISH_MODEL = os.getenv("IMAGE_PROMPT_POLISH_MODEL", "gpt-5.5")
+PROMPT_POLISH_API_KEY = os.getenv("IMAGE_PROMPT_POLISH_API_KEY", "")
+PROMPT_POLISH_CONFIG_PATH = DATA_DIR / "prompt_polish_config.json"
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
 IP_QUOTA_LOCK = Lock()
@@ -246,6 +249,22 @@ def _proxy_error_message(exc: BaseException) -> str:
     if reason:
         return str(reason)
     return str(exc) or exc.__class__.__name__
+
+
+def _prompt_polish_settings() -> tuple[str, str, str]:
+    base_url = PROMPT_POLISH_BASE_URL
+    model = PROMPT_POLISH_MODEL
+    api_key = PROMPT_POLISH_API_KEY
+    try:
+        if PROMPT_POLISH_CONFIG_PATH.exists():
+            data = json.loads(PROMPT_POLISH_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                base_url = str(data.get("base_url") or base_url).strip().rstrip("/")
+                model = str(data.get("model") or model).strip()
+                api_key = str(data.get("api_key") or api_key).strip()
+    except Exception:
+        pass
+    return base_url or f"{IMAGE_PROXY_BASE_URL}/v1", model or "gpt-5.5", api_key
 
 
 def _should_retry_proxy_error(status: int) -> bool:
@@ -595,21 +614,42 @@ def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) ->
 
 
 def _proxy_prompt_polish(prompt: str, mode: str, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
-    instruction = (
-        "你是专业的图像生成提示词优化助手。请在保留用户原意的基础上，"
-        "把输入改写成更清晰、更适合 AI 绘图的中文提示词。"
-        "补充画面主体、构图、光线、材质、镜头、氛围和细节；"
-        "不要解释，不要加标题，只输出润色后的提示词。"
-    )
+    base_url, model, api_key = _prompt_polish_settings()
+    instruction = """
+你是专业的 AI 图片提示词设计师，负责把用户的简短想法改写成适合高质量图片生成或图片编辑的中文提示词。
+
+输出要求：
+1. 只输出最终提示词，不要标题、解释、编号、Markdown、引号。
+2. 保留用户原意，不添加会改变主体身份、产品、人物数量、品牌、文字内容或核心动作的设定。
+3. 提示词要具体、可执行，适合直接提交给图片生成模型。
+4. 优先补全：主体、场景、构图、景别、镜头语言、光线、色彩、材质、质感、风格、氛围、关键细节、画面清晰度。
+5. 避免空泛词堆叠，避免“最高质量、杰作、8K”等无意义堆料；可以使用自然的摄影、插画、设计语言。
+6. 如果用户明确要求文字、Logo、UI、商品、人物特征，要强调准确保留这些元素。
+
+推荐模板：
+主体/对象 + 关键特征 + 场景环境 + 构图和景别 + 光线和色彩 + 材质/质感 + 风格方向 + 需要避免的偏差。
+""".strip()
     if mode == "edit":
-        instruction += "这是基于参考图的图片编辑任务，请强调保留原图核心结构并说明需要修改的部分。"
+        instruction += """
+
+当前是基于参考图的图片编辑任务。请额外遵守：
+1. 明确要求保留参考图的主体身份、姿态、构图、透视、比例、重要物体位置和整体风格。
+2. 清楚描述要修改、替换、增强或新增的部分。
+3. 不要要求模型重画整张图，除非用户原文明确要求。
+4. 输出应更像“编辑指令 + 视觉细节”，让模型知道哪些保持不变、哪些需要改变。
+""".rstrip()
+    else:
+        instruction += """
+
+当前是文生图任务。请把用户想法扩展为完整画面描述，重点提升主体可见性、构图稳定性、审美风格和最终出图可控性。
+""".rstrip()
     payload = {
-        "model": PROMPT_POLISH_MODEL,
+        "model": model,
         "messages": [
             {"role": "system", "content": instruction},
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.7,
+        "temperature": 0.45,
         "stream": False,
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -617,8 +657,10 @@ def _proxy_prompt_polish(prompt: str, mode: str, headers: dict[str, str]) -> tup
         **headers,
         "Content-Type": "application/json",
     }
+    if api_key:
+        request_headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(
-        f"{IMAGE_PROXY_BASE_URL}/v1/chat/completions",
+        f"{base_url}/chat/completions",
         data=body,
         headers=request_headers,
         method="POST",
@@ -761,7 +803,7 @@ def create_app() -> FastAPI:
         polished = _chat_text_from_response(data) if isinstance(data, dict) else ""
         if not polished:
             return JSONResponse(status_code=502, content={"error": "AI 没有返回润色结果"})
-        return {"text": polished, "model": PROMPT_POLISH_MODEL}
+        return {"text": polished, "model": _prompt_polish_settings()[1]}
 
     @app.get("/api/ip-limited/image-tasks")
     async def list_ip_image_tasks(request: Request, ids: str = ""):
