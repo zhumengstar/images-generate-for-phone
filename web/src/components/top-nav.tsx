@@ -23,9 +23,9 @@ export function TopNav() {
     subjectId: "anonymous-user",
     name: "普通用户",
   };
-  const isAnonymousImagePath = pathname === "/image" || pathname.startsWith("/image/");
+  const isImagePagePath = pathname === "/" || pathname === "/image" || pathname.startsWith("/image/");
   const [session, setSession] = useState<StoredAuthSession | null | undefined>(
-    isAnonymousImagePath ? anonymousImageSession : undefined,
+    isImagePagePath ? anonymousImageSession : undefined,
   );
 
   useEffect(() => {
@@ -44,14 +44,14 @@ export function TopNav() {
       if (!active) {
         return;
       }
-      setSession(storedSession || (isAnonymousImagePath ? anonymousImageSession : null));
+      setSession(storedSession || (isImagePagePath ? anonymousImageSession : null));
     };
 
     void load();
     return () => {
       active = false;
     };
-  }, [isAnonymousImagePath, pathname]);
+  }, [isImagePagePath, pathname]);
 
   if (pathname === "/login" || session === undefined || !session) {
     return null;
@@ -83,7 +83,7 @@ export function TopNav() {
         </div>
         <nav className="hide-scrollbar flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">
           {navItems.map((item) => {
-            const active = pathname === item.href;
+            const active = pathname === item.href || (pathname === "/" && item.href === "/image");
             return (
               <Link
                 key={item.href}
