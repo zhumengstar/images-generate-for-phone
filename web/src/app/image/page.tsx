@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { History, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, History, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
@@ -18,14 +18,12 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
-  fetchAccounts,
   createImageEditTask,
   createImageGenerationTask,
   fetchImageTasks,
   fetchIpQuota,
   polishImagePrompt,
   refundIpQuota,
-  type Account,
   type ImageResponse,
   type ImageTask,
   type IpQuotaResponse,
@@ -48,10 +46,12 @@ import {
 
 const ACTIVE_CONVERSATION_STORAGE_KEY = "images-generate:image_active_conversation_id";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "images-generate:image_sidebar_collapsed";
+const TOP_INFO_COLLAPSED_STORAGE_KEY = "images-generate:image_top_info_collapsed";
 const IMAGE_SIZE_STORAGE_KEY = "images-generate:image_last_size";
 const LEGACY_IMAGE_STORAGE_PREFIX = String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105);
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last_size`;
+const MOBILE_SHELL_TOP_HEIGHT = 48;
 const MAX_CONCURRENT_IMAGE_TASKS = 2;
 
 function clampImageCount(value: string) {
@@ -78,11 +78,6 @@ function formatConversationTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
-}
-
-function formatAvailableQuota(accounts: Account[]) {
-  const availableAccounts = accounts.filter((account) => account.status !== "禁用");
-  return String(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
 }
 
 function formatIpQuota(quota: IpQuotaResponse | null) {
@@ -492,8 +487,7 @@ async function recoverConversationHistory(items: ImageConversation[]) {
 }
 
 
-function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
-  const didLoadQuotaRef = useRef(false);
+function ImagePageContent() {
   const didNotifyRestoredTasksRef = useRef(false);
   const conversationsRef = useRef<ImageConversation[]>([]);
   const resultsViewportRef = useRef<HTMLDivElement>(null);
@@ -510,18 +504,25 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
     return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
   });
+  const [isTopInfoCollapsed, setIsTopInfoCollapsed] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(TOP_INFO_COLLAPSED_STORAGE_KEY) === "1";
+  });
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [availableQuota, setAvailableQuota] = useState("加载中...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: "one"; id: string } | { type: "all" } | null>(null);
   const [ipQuota, setIpQuota] = useState<IpQuotaResponse | null>(null);
   const [isPolishingPrompt, setIsPolishingPrompt] = useState(false);
+  const [mobileShellHeight, setMobileShellHeight] = useState<number | null>(null);
+  const mobileShellHeightRef = useRef<number | null>(null);
 
   const parsedCount = useMemo(() => Number(clampImageCount(imageCount)), [imageCount]);
   const selectedConversation = useMemo(
@@ -571,8 +572,123 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     if (typeof window === "undefined") {
       return;
     }
+
+    const root = document.documentElement;
+    const body = document.body;
+    const virtualKeyboard = (
+      navigator as Navigator & {
+        virtualKeyboard?: { overlaysContent: boolean };
+      }
+    ).virtualKeyboard;
+    let baselineHeight = 0;
+    let keyboardFrame = 0;
+    let lastKeyboardOffset = -1;
+
+    const isMobile = () => window.innerWidth < 640;
+    const isTextInputFocused = () => {
+      const active = document.activeElement;
+      return (
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLSelectElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      );
+    };
+
+    const lockMobilePage = () => {
+      if (!isMobile()) {
+        root.classList.remove("image-mobile-lock", "image-keyboard-active");
+        body.classList.remove("image-mobile-lock");
+        root.style.removeProperty("--image-composer-keyboard-offset");
+        mobileShellHeightRef.current = null;
+        setMobileShellHeight(null);
+        return;
+      }
+
+      root.classList.add("image-mobile-lock");
+      body.classList.add("image-mobile-lock");
+      if (!isTextInputFocused()) {
+        baselineHeight = Math.max(window.innerHeight, window.visualViewport?.height || 0, baselineHeight);
+        const nextShellHeight = Math.max(360, window.innerHeight - MOBILE_SHELL_TOP_HEIGHT);
+        if (mobileShellHeightRef.current !== nextShellHeight) {
+          mobileShellHeightRef.current = nextShellHeight;
+          setMobileShellHeight(nextShellHeight);
+        }
+        root.classList.remove("image-keyboard-active");
+        lastKeyboardOffset = 0;
+        root.style.setProperty("--image-composer-keyboard-offset", "0px");
+        return;
+      }
+
+      const viewport = window.visualViewport;
+      const viewportHeight = viewport?.height || window.innerHeight;
+      const viewportOffsetTop = viewport?.offsetTop || 0;
+      const keyboardOffset = Math.max(0, baselineHeight - viewportHeight - viewportOffsetTop);
+      root.classList.add("image-keyboard-active");
+      const roundedOffset = Math.round(keyboardOffset);
+      if (Math.abs(roundedOffset - lastKeyboardOffset) < 2) {
+        return;
+      }
+      lastKeyboardOffset = roundedOffset;
+      if (keyboardFrame) {
+        window.cancelAnimationFrame(keyboardFrame);
+      }
+      keyboardFrame = window.requestAnimationFrame(() => {
+        root.style.setProperty("--image-composer-keyboard-offset", `${roundedOffset}px`);
+        keyboardFrame = 0;
+      });
+    };
+
+    try {
+      if (virtualKeyboard) {
+        virtualKeyboard.overlaysContent = true;
+      }
+    } catch {
+      // Some embedded browsers expose the object but reject the assignment.
+    }
+
+    lockMobilePage();
+    const handleFocusIn = () => {
+      window.setTimeout(lockMobilePage, 0);
+      [120, 320].forEach((delay) => window.setTimeout(lockMobilePage, delay));
+    };
+    const handleFocusOut = () => {
+      window.setTimeout(lockMobilePage, 80);
+    };
+
+    window.addEventListener("resize", lockMobilePage);
+    window.addEventListener("orientationchange", lockMobilePage);
+    window.visualViewport?.addEventListener("resize", lockMobilePage);
+    document.addEventListener("focusin", handleFocusIn, true);
+    document.addEventListener("focusout", handleFocusOut, true);
+    return () => {
+      root.classList.remove("image-mobile-lock", "image-keyboard-active");
+      body.classList.remove("image-mobile-lock");
+      root.style.removeProperty("--image-composer-keyboard-offset");
+      if (keyboardFrame) {
+        window.cancelAnimationFrame(keyboardFrame);
+      }
+      window.removeEventListener("resize", lockMobilePage);
+      window.removeEventListener("orientationchange", lockMobilePage);
+      window.visualViewport?.removeEventListener("resize", lockMobilePage);
+      document.removeEventListener("focusin", handleFocusIn, true);
+      document.removeEventListener("focusout", handleFocusOut, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, isSidebarCollapsed ? "1" : "0");
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(TOP_INFO_COLLAPSED_STORAGE_KEY, isTopInfoCollapsed ? "1" : "0");
+  }, [isTopInfoCollapsed]);
 
   useEffect(() => {
     let cancelled = false;
@@ -646,38 +762,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       cancelled = true;
     };
   }, []);
-
-  const loadQuota = useCallback(async () => {
-    if (!isAdmin) {
-      setAvailableQuota("--");
-      return;
-    }
-    try {
-      const data = await fetchAccounts();
-      setAvailableQuota(formatAvailableQuota(data.items));
-    } catch {
-      setAvailableQuota((prev) => (prev === "加载中..." ? "--" : prev));
-    }
-  }, [isAdmin]);
-
-  useEffect(() => {
-    if (didLoadQuotaRef.current) {
-      return;
-    }
-    didLoadQuotaRef.current = true;
-
-    const handleFocus = () => {
-      void loadQuota();
-    };
-
-    runWhenIdle(() => {
-      void loadQuota();
-    });
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [isAdmin, loadQuota]);
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -1247,7 +1331,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           }
         }
 
-        await loadQuota();
         await loadIpQuota();
       } catch (error) {
         const message = error instanceof Error ? error.message : "生成图片失败";
@@ -1282,7 +1365,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         }
       }
     },
-    [loadIpQuota, loadQuota, updateConversation],
+    [loadIpQuota, updateConversation],
   );
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
@@ -1383,7 +1466,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       toast.success("AI已润色提示词");
       window.setTimeout(() => {
         textareaRef.current?.focus({ preventScroll: true });
-        window.scrollTo(0, 0);
       }, 0);
     } catch (error) {
       toast.error(getErrorMessage(error, "AI润色失败"));
@@ -1395,8 +1477,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   return (
     <>
       <section
+        style={mobileShellHeight ? { height: `${mobileShellHeight}px` } : undefined}
         className={cn(
-          "fixed inset-x-0 top-12 bottom-0 z-10 grid min-h-0 w-full grid-cols-1 overflow-hidden px-0 pb-0 transition-[grid-template-columns] duration-300 sm:relative sm:top-auto sm:bottom-auto sm:z-auto sm:mx-auto sm:h-[calc(100dvh-5rem)] sm:max-w-[1380px] sm:gap-3 sm:px-3 sm:pb-6",
+          "fixed inset-x-0 top-12 z-10 grid min-h-0 w-full grid-cols-1 overflow-hidden px-0 pb-0 transition-[grid-template-columns] duration-300 sm:relative sm:top-auto sm:bottom-auto sm:z-auto sm:mx-auto sm:h-[calc(100dvh-5rem)] sm:max-w-[1380px] sm:gap-3 sm:px-3 sm:pb-6",
+          !mobileShellHeight && "bottom-0",
           isSidebarCollapsed ? "lg:grid-cols-[56px_minmax(0,1fr)]" : "lg:grid-cols-[256px_minmax(0,1fr)]",
         )}
       >
@@ -1494,85 +1578,108 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </DialogContent>
         </Dialog>
 
-        <div className="flex h-full min-h-0 flex-col overflow-hidden sm:gap-4">
-          <div className="shrink-0 bg-stone-50 sm:bg-transparent">
-            <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
-                <span className="font-medium">剩余额度</span>
-                <span className="font-mono">{formatIpQuota(ipQuota)}</span>
-              </span>
-              <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
-                <span className="shrink-0 font-medium text-stone-700">{formatIpQuotaType(ipQuota)}</span>
-                <span className="min-w-0 truncate font-mono">{ipQuota?.name || ipQuota?.user_id || "--"}</span>
-              </span>
-              <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
-                <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
-                <span className="min-w-0 truncate font-mono">{ipQuota?.ip || "读取中"}</span>
-              </span>
-              <span className="hidden max-w-full items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:inline-flex">
-                <span className="shrink-0 font-medium text-stone-700">指纹</span>
-                <span className="min-w-0 truncate font-mono">{ipQuota?.fingerprint.slice(0, 12) || "--"}</span>
-              </span>
-            </div>
+        <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:gap-4">
+          <section className="sticky top-0 z-40 shrink-0 bg-stone-50 sm:bg-transparent" aria-label="页面信息">
+            {isTopInfoCollapsed ? (
+              <div className="flex items-center justify-between border-b border-stone-200/70 bg-white px-3 py-1.5 text-[11px] text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4">
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <span className="rounded-full bg-stone-950 px-2.5 py-1 font-medium text-white">剩余额度 {formatIpQuota(ipQuota)}</span>
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
+                  onClick={() => setIsTopInfoCollapsed(false)}
+                  aria-label="展开顶部信息"
+                  title="展开顶部信息"
+                >
+                  <ChevronDown className="size-3.5" />
+                  展开
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start gap-1.5 border-b border-stone-200/70 bg-white px-3 py-2 text-[11px] leading-5 text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
+                  <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 overflow-hidden">
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
+                      <span className="font-medium">剩余额度</span>
+                      <span className="font-mono">{formatIpQuota(ipQuota)}</span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
+                    onClick={() => setIsTopInfoCollapsed(true)}
+                    aria-label="收起顶部信息"
+                    title="收起顶部信息"
+                  >
+                    <ChevronUp className="size-3.5" />
+                    收起
+                  </button>
+                </div>
 
-            <div className="flex items-center justify-between gap-2 px-3 py-1 lg:hidden">
-              <Button
-                variant="outline"
-                className="h-9 flex-1 rounded-xl border-stone-200 bg-white text-stone-700 shadow-sm"
-                onClick={() => setIsHistoryOpen(true)}
-              >
-                <History className="mr-2 size-4" />
-                历史记录 ({conversations.length})
-              </Button>
-              <Button
-                className="h-9 rounded-xl bg-stone-950 text-white shadow-sm"
-                onClick={handleCreateDraft}
-              >
-                <Plus className="size-4" />
-                新建
-              </Button>
-              <Button
-                variant="outline"
-                className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-600 shadow-sm"
-                onClick={openClearHistoryConfirm}
-                disabled={conversations.length === 0}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          </div>
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-stone-200/70 bg-white px-3 py-2 lg:hidden">
+                  <Button
+                    variant="outline"
+                    className="h-9 min-w-0 rounded-[14px] border-stone-200 bg-white px-3 text-stone-700 shadow-none"
+                    onClick={() => setIsHistoryOpen(true)}
+                  >
+                    <History className="mr-2 size-4 shrink-0" />
+                    <span className="truncate">历史记录 ({conversations.length})</span>
+                  </Button>
+                  <Button
+                    className="h-9 rounded-[14px] bg-stone-950 px-3 text-white shadow-none"
+                    onClick={handleCreateDraft}
+                  >
+                    <Plus className="size-4" />
+                    新建
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-9 rounded-[14px] border-stone-200 bg-white px-3 text-stone-600 shadow-none"
+                    onClick={openClearHistoryConfirm}
+                    disabled={conversations.length === 0}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              </>
+            )}
+          </section>
 
-          <div
-            ref={resultsViewportRef}
-            className="hide-scrollbar min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-3 py-2 sm:px-4 sm:py-4"
-          >
-            <ImageResults
-              selectedConversation={selectedConversation}
-              onOpenLightbox={openLightbox}
-              onDeleteFailedImage={handleDeleteFailedImage}
-              formatConversationTime={formatConversationTime}
+          <section className="image-middle-region min-h-0 overflow-hidden" aria-label="图片生成区域">
+            <div
+              ref={resultsViewportRef}
+              className="hide-scrollbar h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 py-2 sm:px-4 sm:py-4"
+            >
+              <ImageResults
+                selectedConversation={selectedConversation}
+                onOpenLightbox={openLightbox}
+                onDeleteFailedImage={handleDeleteFailedImage}
+                formatConversationTime={formatConversationTime}
+              />
+            </div>
+          </section>
+
+          <section className="z-30 shrink-0" aria-label="输入区域">
+            <ImageComposer
+              prompt={imagePrompt}
+              imageCount={imageCount}
+              imageSize={imageSize}
+              queuedTaskCount={taskStats.queued}
+              runningTaskCount={taskStats.running}
+              isPolishingPrompt={isPolishingPrompt}
+              referenceImages={referenceImages}
+              textareaRef={textareaRef}
+              fileInputRef={fileInputRef}
+              onPromptChange={setImagePrompt}
+              onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
+              onImageSizeChange={setImageSize}
+              onReferenceImageChange={handleReferenceImageChange}
+              onRemoveReferenceImage={handleRemoveReferenceImage}
+              onPolishPrompt={handlePolishPrompt}
+              onSubmit={handleSubmit}
             />
-          </div>
-
-          <ImageComposer
-            prompt={imagePrompt}
-            imageCount={imageCount}
-            imageSize={imageSize}
-            availableQuota={formatIpQuota(ipQuota)}
-            queuedTaskCount={taskStats.queued}
-            runningTaskCount={taskStats.running}
-            isPolishingPrompt={isPolishingPrompt}
-            referenceImages={referenceImages}
-            textareaRef={textareaRef}
-            fileInputRef={fileInputRef}
-            onPromptChange={setImagePrompt}
-            onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
-            onImageSizeChange={setImageSize}
-            onReferenceImageChange={handleReferenceImageChange}
-            onRemoveReferenceImage={handleRemoveReferenceImage}
-            onPolishPrompt={handlePolishPrompt}
-            onSubmit={handleSubmit}
-          />
+          </section>
         </div>
       </section>
 
@@ -1619,5 +1726,5 @@ export default function ImagePage() {
     );
   }
 
-  return <ImagePageContent isAdmin={session.role === "admin"} />;
+  return <ImagePageContent />;
 }

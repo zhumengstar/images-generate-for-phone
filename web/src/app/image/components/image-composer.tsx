@@ -1,6 +1,6 @@
 "use client";
-import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type RefObject } from "react";
+import { ArrowUp, Check, ChevronDown, ChevronUp, ImagePlus, LoaderCircle, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,6 @@ type ImageComposerProps = {
   prompt: string;
   imageCount: string;
   imageSize: string;
-  availableQuota: string;
   queuedTaskCount: number;
   runningTaskCount: number;
   isPolishingPrompt: boolean;
@@ -74,7 +73,6 @@ export function ImageComposer({
   prompt,
   imageCount,
   imageSize,
-  availableQuota,
   queuedTaskCount,
   runningTaskCount,
   isPolishingPrompt,
@@ -111,77 +109,106 @@ export function ImageComposer({
     imageSizeOptions.find((option) => option.value === hoveredSizeValue) || selectedSizeOption;
   const previewAspectStyle = getAspectPreviewStyle(previewSizeOption.value);
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
-  const [isPromptFocused, setIsPromptFocused] = useState(false);
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [isComposerCollapsed, setIsComposerCollapsed] = useState(false);
   const shouldExpandPromptInput = prompt.trim().length > 80 || prompt.includes("\n");
 
-  const keepPageAnchored = () => {
-    window.requestAnimationFrame(() => window.scrollTo(0, 0));
-    window.setTimeout(() => window.scrollTo(0, 0), 80);
-  };
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) {
-      return;
-    }
-
-    const updateKeyboardOffset = () => {
-      const viewport = window.visualViewport;
-      if (!isPromptFocused || !viewport || window.innerWidth >= 640) {
-        setKeyboardOffset(0);
-        return;
-      }
-
-      const offset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
-      setKeyboardOffset(offset > 24 ? Math.round(offset) : 0);
-    };
-
-    updateKeyboardOffset();
-    window.visualViewport.addEventListener("resize", updateKeyboardOffset);
-    window.visualViewport.addEventListener("scroll", updateKeyboardOffset);
-    window.addEventListener("orientationchange", updateKeyboardOffset);
-    return () => {
-      window.visualViewport?.removeEventListener("resize", updateKeyboardOffset);
-      window.visualViewport?.removeEventListener("scroll", updateKeyboardOffset);
-      window.removeEventListener("orientationchange", updateKeyboardOffset);
-    };
-  }, [isPromptFocused]);
-
-  useEffect(() => {
+  const markPromptFocused = useCallback(() => {
     if (typeof window === "undefined" || window.innerWidth >= 640) {
       return;
     }
 
-    const root = document.documentElement;
-    const body = document.body;
-    const previousRootOverflow = root.style.overflow;
-    const previousRootOverscroll = root.style.overscrollBehavior;
-    const previousBodyOverflow = body.style.overflow;
-    const previousBodyOverscroll = body.style.overscrollBehavior;
+    document.documentElement.classList.add("image-keyboard-active");
+  }, []);
 
-    if (isPromptFocused) {
-      root.style.overflow = "hidden";
-      root.style.overscrollBehavior = "none";
-      body.style.overflow = "hidden";
-      body.style.overscrollBehavior = "none";
-      window.addEventListener("scroll", keepPageAnchored, { passive: true });
-      keepPageAnchored();
+  const resetComposerPlacement = useCallback(() => {
+    document.documentElement.classList.remove("image-keyboard-active");
+  }, []);
+
+  const expandMobileComposer = useCallback(() => {
+    setIsComposerCollapsed(false);
+    window.setTimeout(() => {
+      textareaRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }, [textareaRef]);
+
+  const collapseMobileComposer = useCallback(() => {
+    setIsPromptExpanded(false);
+    setIsSizeMenuOpen(false);
+    setIsComposerCollapsed(true);
+    textareaRef.current?.blur();
+    resetComposerPlacement();
+  }, [resetComposerPlacement, textareaRef]);
+
+  const resizePromptTextarea = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (window.innerWidth < 640 && document.documentElement.classList.contains("image-keyboard-active")) {
+      return;
     }
 
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    const isDesktop = window.innerWidth >= 640;
+    const minHeight = isPromptExpanded
+      ? isDesktop
+        ? 260
+        : 188
+      : shouldExpandPromptInput
+        ? isDesktop
+          ? 188
+          : 128
+        : isDesktop
+          ? 148
+          : 68;
+    const maxHeight = Math.round(window.innerHeight * (isPromptExpanded ? 0.52 : shouldExpandPromptInput ? 0.4 : 0.28));
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight))}px`;
+  }, [isPromptExpanded, shouldExpandPromptInput, textareaRef]);
+
+  useLayoutEffect(() => {
+    resizePromptTextarea();
+  }, [prompt, referenceImages.length, resizePromptTextarea]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.addEventListener("resize", resizePromptTextarea);
+    window.addEventListener("orientationchange", resizePromptTextarea);
     return () => {
-      root.style.overflow = previousRootOverflow;
-      root.style.overscrollBehavior = previousRootOverscroll;
-      body.style.overflow = previousBodyOverflow;
-      body.style.overscrollBehavior = previousBodyOverscroll;
-      window.removeEventListener("scroll", keepPageAnchored);
+      window.removeEventListener("resize", resizePromptTextarea);
+      window.removeEventListener("orientationchange", resizePromptTextarea);
     };
-  }, [isPromptFocused]);
+  }, [resizePromptTextarea]);
 
   return (
-    <>
-    <div className="fixed inset-x-0 bottom-0 z-30 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:relative sm:inset-auto sm:z-20 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0">
+    <div
+      className="image-mobile-composer z-30 flex shrink-0 justify-center border-t border-stone-200/80 bg-white backdrop-blur sm:relative sm:inset-auto sm:z-20 sm:translate-y-0 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0"
+    >
       <div style={{ width: "min(980px, 100%)" }}>
-        <div className="overflow-hidden rounded-[22px] border border-stone-200 bg-white shadow-[0_14px_60px_-42px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:shadow-none">
+        {isComposerCollapsed ? (
+          <div className="flex justify-end bg-transparent px-3 py-1.5 pb-[calc(env(safe-area-inset-bottom)+0.375rem)] sm:hidden">
+            <button
+              type="button"
+              className="inline-flex h-9 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-sm"
+              onClick={expandMobileComposer}
+              aria-label="展开输入区"
+            >
+              <ChevronUp className="size-3.5" />
+              输入
+            </button>
+          </div>
+        ) : null}
+        <div className={cn(
+          "overflow-hidden border-t border-stone-200 bg-white shadow-none sm:rounded-[32px] sm:border",
+          isComposerCollapsed && "hidden sm:block",
+        )}>
           <input
             ref={fileInputRef}
             type="file"
@@ -192,97 +219,106 @@ export function ImageComposer({
               void onReferenceImageChange(Array.from(event.target.files || []));
             }}
           />
-          <div
-            className="relative cursor-text"
-            onClick={() => {
-              textareaRef.current?.focus({ preventScroll: true });
-              keepPageAnchored();
-            }}
-          >
-            <div
-              className="relative transition-transform duration-150 sm:translate-y-0"
-              style={{ transform: keyboardOffset > 0 ? `translateY(-${keyboardOffset}px)` : undefined }}
+          <div className="flex flex-col bg-white">
+            <section
+              className="relative cursor-text"
+              onClick={() => {
+                textareaRef.current?.focus({ preventScroll: true });
+              }}
             >
-            <Textarea
-              ref={textareaRef}
-              value={prompt}
-              onChange={(event) => onPromptChange(event.target.value)}
-              onFocus={() => {
-                setIsPromptFocused(true);
-                keepPageAnchored();
-              }}
-              onBlur={() => {
-                setIsPromptFocused(false);
-                setKeyboardOffset(0);
-                keepPageAnchored();
-              }}
-              placeholder="输入你想要生成的画面"
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void onSubmit();
-                }
-              }}
-              className={cn(
-                "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pb-10 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
-                shouldExpandPromptInput && "max-h-[40dvh] min-h-[128px]",
-                isPromptExpanded && "max-h-[52dvh] min-h-[188px] sm:min-h-[260px]",
-                referenceImages.length > 0 && "min-h-[156px] pb-[112px] sm:min-h-[176px] sm:pb-32",
-              )}
-            />
-            <button
-              type="button"
-              className="absolute right-3 top-3 z-10 inline-flex size-8 items-center justify-center rounded-full border border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur transition hover:bg-stone-100 hover:text-stone-950 sm:right-5 sm:top-5 sm:size-9"
-              onClick={(event) => {
-                event.stopPropagation();
-                setIsPromptExpanded((current) => !current);
-              }}
-              aria-label={isPromptExpanded ? "缩小输入框" : "放大输入框"}
-              title={isPromptExpanded ? "缩小输入框" : "放大输入框"}
-            >
-              {isPromptExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-            </button>
-            <button
-              type="button"
-              className="absolute right-3 bottom-3 z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50/95 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm backdrop-blur transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:bottom-20 sm:right-5 sm:h-9 sm:px-3 sm:text-xs"
-              onClick={(event) => {
-                event.stopPropagation();
-                void onPolishPrompt();
-              }}
-              disabled={!prompt.trim() || isPolishingPrompt}
-              aria-label="AI润色"
-            >
-              {isPolishingPrompt ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
-              <span className="hidden min-[390px]:inline">AI润色</span>
-            </button>
+              <Textarea
+                ref={textareaRef}
+                value={prompt}
+                onChange={(event) => onPromptChange(event.target.value)}
+                onFocus={() => {
+                  markPromptFocused();
+                }}
+                onBlur={() => {
+                  resetComposerPlacement();
+                }}
+                placeholder="输入你想要生成的画面"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void onSubmit();
+                  }
+                }}
+                className={cn(
+                  "max-h-[28dvh] min-h-[68px] resize-none overflow-y-auto rounded-none border-0 bg-transparent px-4 pt-3 pr-14 pb-12 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-[40dvh] sm:min-h-[148px] sm:overflow-y-hidden sm:px-6 sm:pt-6 sm:pr-24 sm:pb-14 sm:text-[15px] sm:leading-7",
+                  shouldExpandPromptInput && "max-h-[40dvh] min-h-[128px] sm:min-h-[188px]",
+                  isPromptExpanded && "max-h-[52dvh] min-h-[188px] sm:max-h-[52dvh] sm:min-h-[260px]",
+                )}
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-3 z-10 inline-flex size-8 items-center justify-center rounded-full border border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur transition hover:bg-stone-100 hover:text-stone-950 sm:right-5 sm:top-5 sm:size-9"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setIsPromptExpanded((current) => !current);
+                }}
+                aria-label={isPromptExpanded ? "缩小输入框" : "放大输入框"}
+                title={isPromptExpanded ? "缩小输入框" : "放大输入框"}
+              >
+                {isPromptExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              </button>
+              <button
+                type="button"
+                className="absolute right-12 top-3 z-10 inline-flex size-8 items-center justify-center rounded-full border border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur transition hover:bg-stone-100 hover:text-stone-950 sm:hidden"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  collapseMobileComposer();
+                }}
+                aria-label="收起输入区"
+                title="收起输入区"
+              >
+                <ChevronDown className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                className="absolute right-3 bottom-3 z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50/95 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm backdrop-blur transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:right-5 sm:bottom-4 sm:h-9 sm:px-3 sm:text-xs"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onPolishPrompt();
+                }}
+                disabled={!prompt.trim() || isPolishingPrompt}
+                aria-label="AI润色"
+              >
+                {isPolishingPrompt ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                <span className="hidden min-[390px]:inline">AI润色</span>
+              </button>
+            </section>
 
             {referenceImages.length > 0 ? (
-              <div className="hide-scrollbar absolute inset-x-4 bottom-[54px] z-10 flex gap-1.5 overflow-x-auto pr-12 sm:inset-x-6 sm:bottom-[62px] sm:pr-6">
-                {referenceImages.map((image, index) => (
-                  <div
-                    key={`${image.name}-${index}`}
-                    className="group relative size-11 shrink-0 overflow-hidden rounded-xl border border-white bg-stone-100 shadow-sm ring-1 ring-stone-200/80 sm:size-12"
-                  >
-                    <img src={image.dataUrl} alt={image.name || `参考图 ${index + 1}`} className="h-full w-full object-cover" />
-                    <button
-                      type="button"
-                      className="absolute right-0.5 top-0.5 inline-flex size-4 items-center justify-center rounded-full bg-black/70 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onRemoveReferenceImage(index);
-                      }}
-                      aria-label="移除参考图"
+              <section
+                className="flex min-h-12 items-center gap-2 border-t border-stone-100 bg-white px-3 py-2 sm:min-h-14 sm:px-6 sm:py-3"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="hide-scrollbar flex min-w-0 flex-1 gap-1.5 overflow-x-auto pr-1">
+                  {referenceImages.map((image, index) => (
+                    <div
+                      key={`${image.name}-${index}`}
+                      className="group relative size-11 shrink-0 overflow-hidden rounded-xl border border-white bg-stone-100 shadow-sm ring-1 ring-stone-200/80 sm:size-12"
                     >
-                      <X className="size-2.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                      <img src={image.dataUrl} alt={image.name || `参考图 ${index + 1}`} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        className="absolute right-0.5 top-0.5 inline-flex size-4 items-center justify-center rounded-full bg-black/70 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRemoveReferenceImage(index);
+                        }}
+                        aria-label="移除参考图"
+                      >
+                        <X className="size-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
             ) : null}
-            </div>
 
-            <div
-              className="touch-none overscroll-contain border-t border-stone-100 bg-white px-2 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:touch-auto sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6"
+            <section
+              className="touch-none overscroll-contain border-t border-stone-100 bg-white px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2 sm:touch-auto sm:bg-white sm:px-6 sm:pb-4 sm:pt-3"
               onClick={(event) => event.stopPropagation()}
               onTouchMove={(event) => event.preventDefault()}
             >
@@ -302,9 +338,6 @@ export function ImageComposer({
                     <ImagePlus className="size-3.5" />
                     {referenceImages.length > 0 ? referenceImages.length : ""}
                   </button>
-                  <div className="max-w-[58px] shrink overflow-hidden truncate rounded-full bg-stone-100 px-2 py-1.5 text-[10px] font-medium text-stone-600 min-[390px]:max-w-[78px] sm:max-w-none sm:px-3 sm:py-2 sm:text-xs">
-                    <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
-                  </div>
                   {runningTaskCount > 0 && (
                     <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1.5 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />
@@ -424,21 +457,11 @@ export function ImageComposer({
                   <ArrowUp className="size-3.5 sm:size-4" />
                 </button>
               </div>
-            </div>
+            </section>
           </div>
         </div>
       </div>
     </div>
-    <div
-      className={cn(
-        "h-[154px] shrink-0 sm:hidden",
-        shouldExpandPromptInput && "h-[214px]",
-        isPromptExpanded && "h-[274px]",
-        referenceImages.length > 0 && "h-[242px]",
-      )}
-      aria-hidden="true"
-    />
-    </>
   );
 }
 

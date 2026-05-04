@@ -32,3 +32,5 @@ git_cache/
 # Local deployment artifacts
 server.*.log
 generated-test.png
+tmp/
+web-out.zip

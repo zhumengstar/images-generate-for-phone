@@ -96,8 +96,8 @@ export function TopNav() {
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-40 shrink-0 touch-none select-none overscroll-contain border-b border-stone-100/80 bg-white/95 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.55)] backdrop-blur supports-[backdrop-filter]:bg-white/88 sm:relative sm:inset-auto sm:z-auto sm:touch-auto sm:bg-white/75 sm:shadow-none">
-        <div className="mx-auto flex min-h-12 max-w-[1440px] items-center justify-between gap-2 px-3 py-1.5 sm:min-h-12 sm:gap-3 sm:px-6 sm:py-1">
+      <header className="fixed inset-x-0 top-0 z-40 shrink-0 touch-none select-none overscroll-contain border-b border-stone-200/70 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/88 sm:relative sm:inset-auto sm:z-auto sm:touch-auto sm:bg-white/75 sm:shadow-none">
+        <div className="mx-auto grid min-h-12 max-w-[1440px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 sm:flex sm:min-h-12 sm:gap-3 sm:px-6 sm:py-1">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Link
             href="/"
@@ -117,7 +117,7 @@ export function TopNav() {
           </a>
         </div>
         {isImagePagePath ? (
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
             <div className="grid grid-cols-2 gap-1 rounded-full bg-stone-100 p-1">
               <button
                 type="button"
