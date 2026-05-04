@@ -180,7 +180,7 @@ export function ImageComposer({
             />
             <button
               type="button"
-              className="absolute top-3 right-3 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:top-5 sm:right-5 sm:h-9 sm:px-3 sm:text-xs"
+              className="absolute top-[68px] right-3 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:top-[86px] sm:right-5 sm:h-9 sm:px-3 sm:text-xs"
               onClick={(event) => {
                 event.stopPropagation();
                 void onPolishPrompt();
