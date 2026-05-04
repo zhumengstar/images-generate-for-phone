@@ -66,6 +66,18 @@ class WebUserService:
             "last_used_at": item.get("last_used_at"),
         }
 
+    def _device_owner_index(self, device_fingerprint: str) -> int | None:
+        normalized_device = _clean(device_fingerprint)
+        if not normalized_device:
+            return None
+        for index, item in enumerate(self._items):
+            if self._public_item(item).get("role") == "admin":
+                continue
+            sessions = _sessions(item)
+            if normalized_device in sessions or _clean(item.get("device_fingerprint")) == normalized_device:
+                return index
+        return None
+
     def _ensure_admin(self) -> None:
         with self._lock:
             changed = False
@@ -109,9 +121,9 @@ class WebUserService:
         normalized_password = str(password or "")
         normalized_device = _clean(device_fingerprint) or "unknown"
         if not normalized_username or not normalized_password:
-            raise ValueError("username and password are required")
+            raise ValueError("请输入用户名和密码")
         if len(normalized_username) > 32 or len(normalized_password) > 128:
-            raise ValueError("username or password is too long")
+            raise ValueError("用户名或密码过长")
 
         with self._lock:
             matched_index: int | None = None
@@ -128,8 +140,12 @@ class WebUserService:
                 salt = _clean(item.get("salt"))
                 password_hash = _clean(item.get("password_hash"))
                 if not salt or not password_hash or not hmac.compare_digest(password_hash, _hash_secret(normalized_password, salt)):
-                    raise PermissionError("username or password is invalid")
+                    raise PermissionError("用户名或密码错误")
             else:
+                if normalized_username.lower() != ADMIN_USERNAME:
+                    owner_index = self._device_owner_index(normalized_device)
+                    if owner_index is not None:
+                        raise PermissionError("当前设备已绑定其他用户，无法继续登录")
                 salt = secrets.token_hex(16)
                 matched_index = len(self._items)
                 matched_item = {
@@ -147,6 +163,11 @@ class WebUserService:
             matched_role = self._public_item(self._items[matched_index]).get("role")
             is_admin_login = matched_role == "admin"
             session_key = f"admin|{uuid.uuid4().hex[:16]}" if is_admin_login else normalized_device
+
+            if not is_admin_login:
+                owner_index = self._device_owner_index(normalized_device)
+                if owner_index is not None and owner_index != matched_index:
+                    raise PermissionError("当前设备已绑定其他用户，无法继续登录")
 
             if not is_admin_login:
                 for index, raw_item in enumerate(self._items):

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ArrowLeft, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { isCheckingAuth } = useRedirectIfAuthenticated();
 
@@ -117,7 +118,7 @@ export default function LoginPage() {
               <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
               <Input
                 id="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 onKeyDown={(event) => {
@@ -126,9 +127,17 @@ export default function LoginPage() {
                   }
                 }}
                 placeholder="自定义密码"
-                className="h-12 rounded-2xl border-stone-200 bg-white pl-10 pr-4 text-[15px]"
+                className="h-12 rounded-2xl border-stone-200 bg-white pl-10 pr-12 text-[15px]"
                 autoComplete="current-password"
               />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
+                onClick={() => setShowPassword((current) => !current)}
+                aria-label={showPassword ? "隐藏密码" : "显示密码"}
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
             </div>
           </div>
 

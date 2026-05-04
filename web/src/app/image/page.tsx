@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { History, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { History, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
@@ -31,6 +31,7 @@ import {
   type IpQuotaResponse,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
+import { cn } from "@/lib/utils";
 import {
   clearImageConversations,
   deleteImageConversation,
@@ -46,6 +47,7 @@ import {
 } from "@/store/image-conversations";
 
 const ACTIVE_CONVERSATION_STORAGE_KEY = "images-generate:image_active_conversation_id";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "images-generate:image_sidebar_collapsed";
 const IMAGE_SIZE_STORAGE_KEY = "images-generate:image_last_size";
 const LEGACY_IMAGE_STORAGE_PREFIX = String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105);
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_active_conversation_id`;
@@ -292,6 +294,23 @@ function sortImageConversations(conversations: ImageConversation[]) {
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function runWhenIdle(callback: () => void) {
+  if (typeof window === "undefined") {
+    callback();
+    return;
+  }
+  const requestIdleCallback = (
+    window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    }
+  ).requestIdleCallback;
+  if (requestIdleCallback) {
+    requestIdleCallback(callback, { timeout: 1800 });
+    return;
+  }
+  window.setTimeout(callback, 300);
+}
+
 function hasLoadingTurn(conversation: ImageConversation, status?: ImageTurnStatus) {
   return conversation.turns.some(
     (turn) =>
@@ -485,6 +504,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageCount, setImageCount] = useState("1");
   const [imageSize, setImageSize] = useState("");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+  });
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
@@ -532,7 +557,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   }, [conversations]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, isSidebarCollapsed ? "1" : "0");
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
     let cancelled = false;
+
+    const applyLoadedConversations = (items: ImageConversation[]) => {
+      conversationsRef.current = items;
+      setConversations(items);
+      const storedConversationId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) ||
+            window.localStorage.getItem(LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY)
+          : null;
+      const nextSelectedConversationId =
+        (storedConversationId && items.some((conversation) => conversation.id === storedConversationId)
+          ? storedConversationId
+          : null) ?? pickFallbackConversationId(items);
+      setSelectedConversationId(nextSelectedConversationId);
+    };
 
     const loadHistory = async () => {
       try {
@@ -545,38 +592,36 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         setImageCount("1");
 
         const items = await listImageConversations();
-        const normalizedItems = await recoverConversationHistory(items);
         if (cancelled) {
           return;
         }
 
-        conversationsRef.current = normalizedItems;
-        setConversations(normalizedItems);
-        if (
-          !didNotifyRestoredTasksRef.current &&
-          normalizedItems.some((conversation) =>
-            conversation.turns.some(
-              (turn) =>
-                (turn.status === "queued" || turn.status === "generating") &&
-                turn.images.some((image) => image.status === "loading" && image.taskId),
-            ),
-          )
-        ) {
-          didNotifyRestoredTasksRef.current = true;
-          toast.info("检测到未完成任务，已继续同步结果；刷新页面不会中断后台生成。");
-        }
-        const storedConversationId =
-          typeof window !== "undefined"
-            ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) ||
-              window.localStorage.getItem(LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY)
-            : null;
-        const nextSelectedConversationId =
-          (storedConversationId && normalizedItems.some((conversation) => conversation.id === storedConversationId)
-            ? storedConversationId
-            : null) ?? pickFallbackConversationId(normalizedItems);
-        setSelectedConversationId(nextSelectedConversationId);
+        applyLoadedConversations(items);
+        setIsLoadingHistory(false);
+        runWhenIdle(() => {
+          void (async () => {
+            const normalizedItems = await recoverConversationHistory(items);
+            if (cancelled) {
+              return;
+            }
+            applyLoadedConversations(normalizedItems);
+            if (
+              !didNotifyRestoredTasksRef.current &&
+              normalizedItems.some((conversation) =>
+                conversation.turns.some(
+                  (turn) =>
+                    (turn.status === "queued" || turn.status === "generating") &&
+                    turn.images.some((image) => image.status === "loading" && image.taskId),
+                ),
+              )
+            ) {
+              didNotifyRestoredTasksRef.current = true;
+              toast.info("\u68c0\u6d4b\u5230\u672a\u5b8c\u6210\u4efb\u52a1\uff0c\u5df2\u7ee7\u7eed\u540c\u6b65\u7ed3\u679c\uff1b\u5237\u65b0\u9875\u9762\u4e0d\u4f1a\u4e2d\u65ad\u540e\u53f0\u751f\u6210\u3002");
+            }
+          })();
+        });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "读取会话记录失败";
+        const message = error instanceof Error ? error.message : "\u8bfb\u53d6\u4f1a\u8bdd\u8bb0\u5f55\u5931\u8d25";
         toast.error(message);
       } finally {
         if (!cancelled) {
@@ -614,7 +659,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       void loadQuota();
     };
 
-    void loadQuota();
+    runWhenIdle(() => {
+      void loadQuota();
+    });
     window.addEventListener("focus", handleFocus);
     return () => {
       window.removeEventListener("focus", handleFocus);
@@ -1315,18 +1362,74 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      <section className="fixed inset-x-0 top-12 bottom-0 z-10 grid min-h-0 w-full grid-cols-1 overflow-hidden px-0 pb-0 sm:relative sm:top-auto sm:bottom-auto sm:z-auto sm:mx-auto sm:h-[calc(100dvh-5rem)] sm:max-w-[1380px] sm:gap-3 sm:px-3 sm:pb-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-        <div className="hidden h-full min-h-0 border-r border-stone-200/70 pr-3 lg:block">
-          <ImageSidebar
-            conversations={conversations}
-            isLoadingHistory={isLoadingHistory}
-            selectedConversationId={selectedConversationId}
-            onCreateDraft={handleCreateDraft}
-            onClearHistory={openClearHistoryConfirm}
-            onSelectConversation={setSelectedConversationId}
-            onDeleteConversation={openDeleteConversationConfirm}
-            formatConversationTime={formatConversationTime}
-          />
+      <section
+        className={cn(
+          "fixed inset-x-0 top-12 bottom-0 z-10 grid min-h-0 w-full grid-cols-1 overflow-hidden px-0 pb-0 transition-[grid-template-columns] duration-300 sm:relative sm:top-auto sm:bottom-auto sm:z-auto sm:mx-auto sm:h-[calc(100dvh-5rem)] sm:max-w-[1380px] sm:gap-3 sm:px-3 sm:pb-6",
+          isSidebarCollapsed ? "lg:grid-cols-[56px_minmax(0,1fr)]" : "lg:grid-cols-[256px_minmax(0,1fr)]",
+        )}
+      >
+        <div className="hidden h-full min-h-0 lg:block">
+          {isSidebarCollapsed ? (
+            <div className="flex h-full min-h-0 flex-col items-center gap-2 rounded-2xl border border-stone-200/70 bg-white/70 px-2 py-3 shadow-sm">
+              <div className="group relative">
+                <button
+                  type="button"
+                  className="inline-flex size-10 items-center justify-center rounded-xl bg-stone-950 text-white transition hover:bg-stone-800"
+                  onClick={() => setIsSidebarCollapsed(false)}
+                  aria-label="展开历史记录"
+                >
+                  <PanelLeftOpen className="size-4" />
+                </button>
+                <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-stone-950 px-2 py-1 text-xs text-white opacity-0 shadow-sm transition group-hover:opacity-100">
+                  展开历史记录
+                </span>
+              </div>
+              <div className="group relative">
+                <button
+                  type="button"
+                  className="relative inline-flex size-10 items-center justify-center rounded-xl border border-stone-200 bg-white text-stone-600 transition hover:bg-stone-50 hover:text-stone-950"
+                  onClick={() => setIsSidebarCollapsed(false)}
+                  aria-label="历史记录"
+                >
+                  <History className="size-4" />
+                  {conversations.length > 0 ? (
+                    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-stone-950 px-1 text-[10px] leading-4 text-white">
+                      {Math.min(99, conversations.length)}
+                    </span>
+                  ) : null}
+                </button>
+                <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-stone-950 px-2 py-1 text-xs text-white opacity-0 shadow-sm transition group-hover:opacity-100">
+                  历史记录
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-full min-h-0 flex-col rounded-2xl border border-stone-200/70 bg-white/35 p-2 shadow-sm">
+              <div className="mb-2 flex justify-end">
+                <button
+                  type="button"
+                  className="inline-flex size-8 items-center justify-center rounded-xl text-stone-500 transition hover:bg-white hover:text-stone-950"
+                  onClick={() => setIsSidebarCollapsed(true)}
+                  aria-label="收起历史记录"
+                  title="收起历史记录"
+                >
+                  <PanelLeftClose className="size-4" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">
+                <ImageSidebar
+                  conversations={conversations}
+                  isLoadingHistory={isLoadingHistory}
+                  selectedConversationId={selectedConversationId}
+                  onCreateDraft={handleCreateDraft}
+                  onClearHistory={openClearHistoryConfirm}
+                  onSelectConversation={setSelectedConversationId}
+                  onDeleteConversation={openDeleteConversationConfirm}
+                  formatConversationTime={formatConversationTime}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>

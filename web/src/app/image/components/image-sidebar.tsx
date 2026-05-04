@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle, MessageSquarePlus, Trash2 } from "lucide-react";
+import { Images, LoaderCircle, MessageSquarePlus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -31,20 +31,32 @@ export function ImageSidebar({
 }: ImageSidebarProps) {
   return (
     <aside className="h-full min-h-0 overflow-hidden">
-      <div className="flex h-full min-h-0 flex-col gap-2 py-1 sm:gap-3 sm:py-2">
+      <div className="flex h-full min-h-0 flex-col gap-3 py-1 sm:py-2">
         {!hideActionButtons && (
-          <div className="flex items-center gap-2">
-            <Button className="h-10 flex-1 rounded-xl bg-stone-950 text-white hover:bg-stone-800" onClick={onCreateDraft}>
+          <div className="space-y-3 rounded-2xl border border-stone-200/70 bg-white/80 p-3 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-xl bg-stone-950 text-white">
+                  <Images className="size-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-stone-950">历史记录</div>
+                  <div className="text-xs text-stone-500">{conversations.length} 条对话</div>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="size-8 rounded-xl border-stone-200 bg-white px-0 text-stone-500 hover:bg-stone-50 hover:text-rose-500"
+                onClick={() => void onClearHistory()}
+                disabled={conversations.length === 0}
+                aria-label="清空历史"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+            <Button className="h-10 w-full rounded-xl bg-stone-950 text-white hover:bg-stone-800" onClick={onCreateDraft}>
               <MessageSquarePlus className="size-4" />
               新建对话
-            </Button>
-            <Button
-              variant="outline"
-              className="h-10 rounded-xl border-stone-200 bg-white/85 px-3 text-stone-600 hover:bg-white"
-              onClick={() => void onClearHistory()}
-              disabled={conversations.length === 0}
-            >
-              <Trash2 className="size-4" />
             </Button>
           </div>
         )}
@@ -56,12 +68,14 @@ export function ImageSidebar({
           )}
         >
           {isLoadingHistory ? (
-            <div className="flex items-center gap-2 px-2 py-3 text-sm text-stone-500">
+            <div className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-white/70 px-3 py-3 text-sm text-stone-500">
               <LoaderCircle className="size-4 animate-spin" />
               正在读取会话记录
             </div>
           ) : conversations.length === 0 ? (
-            <div className="px-2 py-3 text-sm leading-6 text-stone-500">还没有图片记录，输入提示词后会在这里显示。</div>
+            <div className="rounded-2xl border border-dashed border-stone-200 bg-white/55 px-4 py-5 text-sm leading-6 text-stone-500">
+              还没有图片记录，输入提示词后会在这里显示。
+            </div>
           ) : (
             conversations.map((conversation) => {
               const active = conversation.id === selectedConversationId;
@@ -70,11 +84,13 @@ export function ImageSidebar({
                 <div
                   key={conversation.id}
                   className={cn(
-                    "group relative w-full border-l-2 text-left transition",
-                    hideActionButtons ? "px-4 py-3.5" : "px-3 py-2 sm:py-3",
+                    "group relative w-full text-left transition",
+                    hideActionButtons
+                      ? "rounded-2xl border border-transparent px-4 py-3.5"
+                      : "rounded-2xl border px-3 py-2 shadow-sm sm:py-3",
                     active
-                      ? "border-stone-900 bg-black/[0.035] text-stone-950"
-                      : "border-transparent text-stone-700 hover:border-stone-300 hover:bg-white/40",
+                      ? "border-stone-300 bg-white text-stone-950 shadow-[0_14px_38px_-30px_rgba(28,25,23,0.45)]"
+                      : "border-stone-200/60 bg-white/55 text-stone-700 hover:border-stone-300 hover:bg-white",
                   )}
                 >
                   <button
@@ -106,7 +122,7 @@ export function ImageSidebar({
                       void onDeleteConversation(conversation.id);
                     }}
                     className={cn(
-                      "absolute top-3 right-2 inline-flex size-7 items-center justify-center rounded-md text-stone-400 transition hover:bg-stone-100 hover:text-rose-500",
+                      "absolute right-2 top-3 inline-flex size-7 items-center justify-center rounded-md text-stone-400 transition hover:bg-stone-100 hover:text-rose-500",
                       hideActionButtons ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                     )}
                     aria-label="删除会话"

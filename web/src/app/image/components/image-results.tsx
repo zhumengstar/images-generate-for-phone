@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
 
 import type { ImageConversation, ImageTurnStatus, StoredImage } from "@/store/image-conversations";
@@ -24,21 +24,6 @@ function getStoredImageSrc(image: StoredImage) {
     return `data:image/png;base64,${image.b64_json}`;
   }
   return image.url || "";
-}
-
-function base64ToObjectUrl(base64: string) {
-  const normalized = base64.includes(",") ? base64.split(",", 2)[1] : base64;
-  const byteCharacters = atob(normalized.replace(/\s/g, ""));
-  const chunks: Uint8Array[] = [];
-  for (let offset = 0; offset < byteCharacters.length; offset += 8192) {
-    const slice = byteCharacters.slice(offset, offset + 8192);
-    const bytes = new Uint8Array(slice.length);
-    for (let index = 0; index < slice.length; index += 1) {
-      bytes[index] = slice.charCodeAt(index);
-    }
-    chunks.push(bytes);
-  }
-  return URL.createObjectURL(new Blob(chunks, { type: "image/png" }));
 }
 
 function getImageAspectStyle(size: string): CSSProperties {
@@ -67,24 +52,7 @@ function StoredImageElement({
   className?: string;
   onLoad: (width: number, height: number) => void;
 }) {
-  const [objectUrl, setObjectUrl] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
-
-  useEffect(() => {
-    setLoadFailed(false);
-    if (!image.b64_json) {
-      setObjectUrl("");
-      return;
-    }
-
-    try {
-      const nextObjectUrl = base64ToObjectUrl(image.b64_json);
-      setObjectUrl(nextObjectUrl);
-      return () => URL.revokeObjectURL(nextObjectUrl);
-    } catch {
-      setObjectUrl("");
-    }
-  }, [image.b64_json]);
 
   if (loadFailed) {
     return (
@@ -96,9 +64,11 @@ function StoredImageElement({
 
   return (
     <img
-      src={objectUrl || fallbackSrc}
+      src={fallbackSrc}
       alt={alt}
       className={className}
+      loading="lazy"
+      decoding="async"
       onLoad={(event) => onLoad(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)}
       onError={() => setLoadFailed(true)}
     />

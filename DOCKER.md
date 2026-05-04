@@ -14,7 +14,7 @@ cp .env.example .env
 APP_PORT=8000
 NEXT_PUBLIC_DEFAULT_AUTH_KEY=your_secret_key_here
 CHATGPT2API_AUTH_KEY=your_secret_key_here
-IMAGE_PROXY_BASE_URL=http://165.154.254.130:3000
+IMAGE_PROXY_BASE_URL=https://generate.muling.store
 IMAGE_PROXY_IP_QUOTA_LIMIT=20
 ```
 

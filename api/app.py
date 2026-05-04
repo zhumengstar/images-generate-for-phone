@@ -29,7 +29,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 GUEST_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT", "5"))
 USER_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT", os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20")))
-IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "http://165.154.254.130:3000").rstrip("/")
+IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "https://generate.muling.store").rstrip("/")
 IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
 IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
 IMAGE_EDIT_MAX_SIDE = int(os.getenv("IMAGE_PROXY_EDIT_MAX_SIDE", "2048"))
@@ -66,28 +66,32 @@ def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, obj
     authorization = request.headers.get("authorization")
     token = extract_bearer_token(authorization)
     if token:
-        identity = require_identity(authorization)
-        subject_id = str(identity.get("id") or "").strip() or "user"
-        role = str(identity.get("role") or "user")
-        if role == "admin":
+        try:
+            identity = require_identity(authorization)
+        except HTTPException:
+            identity = None
+        if identity is not None:
+            subject_id = str(identity.get("id") or "").strip() or "user"
+            role = str(identity.get("role") or "user")
+            if role == "admin":
+                return {
+                    "key": f"admin|{subject_id}",
+                    "user_id": subject_id,
+                    "name": identity.get("name") or subject_id,
+                    "type": "admin",
+                    "limit": -1,
+                    "ip": ip,
+                    "fingerprint": fingerprint,
+                }
             return {
-                "key": f"admin|{subject_id}",
+                "key": f"user|{subject_id}|{fingerprint}",
                 "user_id": subject_id,
                 "name": identity.get("name") or subject_id,
-                "type": "admin",
-                "limit": -1,
+                "type": "user",
+                "limit": USER_IMAGE_QUOTA_LIMIT,
                 "ip": ip,
                 "fingerprint": fingerprint,
             }
-        return {
-            "key": f"user|{subject_id}|{fingerprint}",
-            "user_id": subject_id,
-            "name": identity.get("name") or subject_id,
-            "type": "user",
-            "limit": USER_IMAGE_QUOTA_LIMIT,
-            "ip": ip,
-            "fingerprint": fingerprint,
-        }
 
     identity = ip_fingerprint_identity(request)
     return {
@@ -640,11 +644,16 @@ def _run_ip_image_task(
 
 def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
     body = json.dumps(payload).encode("utf-8")
+    request_headers = {
+        **headers,
+        "Accept": "application/json",
+        "User-Agent": "curl/8.0.1",
+    }
     for attempt in range(max(1, IMAGE_PROXY_RETRIES + 1)):
         request = urllib.request.Request(
             f"{IMAGE_PROXY_BASE_URL}/v1/images/generations",
             data=body,
-            headers=headers,
+            headers=request_headers,
             method="POST",
         )
         try:
@@ -762,7 +771,12 @@ def _build_multipart_body(fields: dict[str, str], files: list[tuple[str, str, st
 
 def _proxy_image_edit(fields: dict[str, str], files: list[tuple[str, str, str, bytes]], headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
     content_type, body = _build_multipart_body(fields, files)
-    request_headers = {**headers, "Content-Type": content_type}
+    request_headers = {
+        **headers,
+        "Accept": "application/json",
+        "Content-Type": content_type,
+        "User-Agent": "curl/8.0.1",
+    }
     for attempt in range(max(1, IMAGE_PROXY_RETRIES + 1)):
         request = urllib.request.Request(
             f"{IMAGE_PROXY_BASE_URL}/v1/images/edits",
@@ -849,7 +863,6 @@ def create_app() -> FastAPI:
         headers = {
             "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
-            "X-Forwarded-For": ip,
         }
         status, data = _proxy_prompt_polish(prompt, mode, headers)
         if status >= 400:
@@ -917,7 +930,6 @@ def create_app() -> FastAPI:
             "Content-Type": "application/json",
             "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
-            "X-Forwarded-For": ip,
         }
         with IP_IMAGE_TASKS_LOCK:
             items = _load_ip_tasks()
@@ -1016,7 +1028,6 @@ def create_app() -> FastAPI:
         headers = {
             "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
-            "X-Forwarded-For": ip,
         }
 
         with IP_IMAGE_TASKS_LOCK:
@@ -1089,7 +1100,6 @@ def create_app() -> FastAPI:
             "Content-Type": "application/json",
             "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
-            "X-Forwarded-For": ip,
         }
         status, data = _proxy_image_generation(payload, headers)
         if status >= 400:
@@ -1143,7 +1153,6 @@ def create_app() -> FastAPI:
         headers = {
             "Authorization": _proxy_authorization(request),
             "X-Device-Fingerprint": fingerprint,
-            "X-Forwarded-For": ip,
         }
         status, data = _proxy_image_edit(fields, files, headers)
         if status >= 400:

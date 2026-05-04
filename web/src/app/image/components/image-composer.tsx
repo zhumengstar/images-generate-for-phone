@@ -123,7 +123,7 @@ export function ImageComposer({
               }}
               className={cn(
                 "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
-                referenceImages.length > 0 && "min-h-[132px] pb-[76px] sm:pb-20",
+                referenceImages.length > 0 && "min-h-[156px] pb-[112px] sm:min-h-[176px] sm:pb-32",
               )}
             />
             <button
@@ -141,7 +141,7 @@ export function ImageComposer({
             </button>
 
             {referenceImages.length > 0 ? (
-              <div className="hide-scrollbar absolute inset-x-3 bottom-[58px] z-10 flex gap-1.5 overflow-x-auto pr-12 sm:inset-x-6 sm:bottom-[68px] sm:pr-6">
+              <div className="hide-scrollbar absolute inset-x-4 bottom-[54px] z-10 flex gap-1.5 overflow-x-auto pr-12 sm:inset-x-6 sm:bottom-[62px] sm:pr-6">
                 {referenceImages.map((image, index) => (
                   <div
                     key={`${image.name}-${index}`}

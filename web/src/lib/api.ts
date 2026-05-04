@@ -204,9 +204,39 @@ export type RegisterConfig = {
   }>;
 };
 
+function translateKnownErrorMessage(message: string): string {
+  const text = message.trim();
+  const lower = text.toLowerCase();
+  if (!text) {
+    return "";
+  }
+  if (lower === "network error" || lower === "failed to fetch" || lower.includes("load failed")) {
+    return "网络连接失败，请检查服务是否正常运行";
+  }
+  if (lower.includes("timeout")) {
+    return "请求超时，请稍后重试";
+  }
+  if (lower.includes("this device is already bound")) {
+    return "当前设备已绑定其他用户，无法继续登录";
+  }
+  if (lower.includes("username or password is invalid")) {
+    return "用户名或密码错误";
+  }
+  if (lower.includes("username and password are required")) {
+    return "请输入用户名和密码";
+  }
+  if (lower.includes("username or password is too long")) {
+    return "用户名或密码过长";
+  }
+  if (lower.startsWith("request failed with status code")) {
+    return "请求失败，请稍后重试";
+  }
+  return text;
+}
+
 function errorMessageFromValue(value: unknown): string {
   if (typeof value === "string") {
-    return value;
+    return translateKnownErrorMessage(value);
   }
   if (!value || typeof value !== "object") {
     return "";
@@ -302,7 +332,7 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
     const message =
       errorMessageFromValue(payload.detail) ||
       errorMessageFromValue(payload.error) ||
-      payload.message ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
       `生成失败 (${response.status})`;
     throw new Error(message);
   }
@@ -358,7 +388,7 @@ export async function polishImagePrompt(prompt: string, mode: "generate" | "edit
     const message =
       errorMessageFromValue(payload.detail) ||
       errorMessageFromValue(payload.error) ||
-      payload.message ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
       `AI润色失败 (${response.status})`;
     throw new Error(message);
   }
@@ -397,7 +427,7 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
     const message =
       errorMessageFromValue(payload.detail) ||
       errorMessageFromValue(payload.error) ||
-      payload.message ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
       `图片编辑失败 (${response.status})`;
     throw new Error(message);
   }
@@ -426,7 +456,7 @@ export async function createImageGenerationTask(clientTaskId: string, prompt: st
     const message =
       errorMessageFromValue(payload.detail) ||
       errorMessageFromValue(payload.error) ||
-      payload.message ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
       `创建生成任务失败 (${response.status})`;
     throw new Error(message);
   }
@@ -470,7 +500,7 @@ export async function createImageEditTask(
     const message =
       errorMessageFromValue(payload.detail) ||
       errorMessageFromValue(payload.error) ||
-      payload.message ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
       `创建编辑任务失败 (${response.status})`;
     throw new Error(message);
   }

@@ -15,9 +15,39 @@ type ErrorPayload = {
     message?: string;
 };
 
+function translateKnownErrorMessage(message: string): string {
+    const text = message.trim();
+    const lower = text.toLowerCase();
+    if (!text) {
+        return "";
+    }
+    if (lower === "network error" || lower === "failed to fetch" || lower.includes("load failed")) {
+        return "网络连接失败，请检查服务是否正常运行";
+    }
+    if (lower.includes("timeout")) {
+        return "请求超时，请稍后重试";
+    }
+    if (lower.includes("this device is already bound")) {
+        return "当前设备已绑定其他用户，无法继续登录";
+    }
+    if (lower.includes("username or password is invalid")) {
+        return "用户名或密码错误";
+    }
+    if (lower.includes("username and password are required")) {
+        return "请输入用户名和密码";
+    }
+    if (lower.includes("username or password is too long")) {
+        return "用户名或密码过长";
+    }
+    if (lower.startsWith("request failed with status code")) {
+        return "请求失败，请稍后重试";
+    }
+    return text;
+}
+
 function errorMessageFromValue(value: unknown): string {
     if (typeof value === "string") {
-        return value;
+        return translateKnownErrorMessage(value);
     }
     if (!value || typeof value !== "object") {
         return "";
@@ -38,8 +68,8 @@ function resolveApiBaseUrl() {
     try {
         const currentHost = window.location.hostname;
         const configuredUrl = new URL(configured, window.location.origin);
-        const isLocalPage = currentHost === "localhost" || currentHost === "127.0.0.1";
-        return isLocalPage || configuredUrl.host === window.location.host ? configured : "";
+        const isLocalPage = currentHost === "localhost" || currentHost === "127.0.0.1" || currentHost === "::1";
+        return isLocalPage || configuredUrl.host === window.location.host ? "" : configured;
     } catch {
         return "";
     }
@@ -47,6 +77,7 @@ function resolveApiBaseUrl() {
 
 const request = axios.create({
     baseURL: resolveApiBaseUrl(),
+    timeout: 15000,
 });
 
 request.interceptors.request.use(async (config) => {
@@ -86,8 +117,8 @@ request.interceptors.response.use(
         const message =
             errorMessageFromValue(payload?.detail) ||
             errorMessageFromValue(payload?.error) ||
-            payload?.message ||
-            error.message ||
+            translateKnownErrorMessage(payload?.message || "") ||
+            translateKnownErrorMessage(error.message || "") ||
             `请求失败 (${status || 500})`;
         return Promise.reject(new Error(message));
     },
