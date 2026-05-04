@@ -1,6 +1,6 @@
 "use client";
-import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Sparkles, X } from "lucide-react";
-import { useState, type CSSProperties, type RefObject } from "react";
+import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
+import { useEffect, useState, type CSSProperties, type RefObject } from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 
 import { Input } from "@/components/ui/input";
@@ -49,6 +49,27 @@ function getAspectPreviewStyle(value: string): CSSProperties {
   };
 }
 
+function getAspectThumbnailStyle(value: string): CSSProperties {
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(value);
+  if (!match) {
+    return { width: 22, height: 22 };
+  }
+
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { width: 22, height: 22 };
+  }
+
+  const maxWidth = 34;
+  const maxHeight = 24;
+  const scale = Math.min(maxWidth / width, maxHeight / height);
+  return {
+    width: Math.max(8, width * scale),
+    height: Math.max(8, height * scale),
+  };
+}
+
 export function ImageComposer({
   prompt,
   imageCount,
@@ -89,9 +110,76 @@ export function ImageComposer({
   const previewSizeOption =
     imageSizeOptions.find((option) => option.value === hoveredSizeValue) || selectedSizeOption;
   const previewAspectStyle = getAspectPreviewStyle(previewSizeOption.value);
+  const [isPromptExpanded, setIsPromptExpanded] = useState(false);
+  const [isPromptFocused, setIsPromptFocused] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const shouldExpandPromptInput = prompt.trim().length > 80 || prompt.includes("\n");
+
+  const keepPageAnchored = () => {
+    window.requestAnimationFrame(() => window.scrollTo(0, 0));
+    window.setTimeout(() => window.scrollTo(0, 0), 80);
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) {
+      return;
+    }
+
+    const updateKeyboardOffset = () => {
+      const viewport = window.visualViewport;
+      if (!isPromptFocused || !viewport || window.innerWidth >= 640) {
+        setKeyboardOffset(0);
+        return;
+      }
+
+      const offset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      setKeyboardOffset(offset > 24 ? Math.round(offset) : 0);
+    };
+
+    updateKeyboardOffset();
+    window.visualViewport.addEventListener("resize", updateKeyboardOffset);
+    window.visualViewport.addEventListener("scroll", updateKeyboardOffset);
+    window.addEventListener("orientationchange", updateKeyboardOffset);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateKeyboardOffset);
+      window.visualViewport?.removeEventListener("scroll", updateKeyboardOffset);
+      window.removeEventListener("orientationchange", updateKeyboardOffset);
+    };
+  }, [isPromptFocused]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.innerWidth >= 640) {
+      return;
+    }
+
+    const root = document.documentElement;
+    const body = document.body;
+    const previousRootOverflow = root.style.overflow;
+    const previousRootOverscroll = root.style.overscrollBehavior;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyOverscroll = body.style.overscrollBehavior;
+
+    if (isPromptFocused) {
+      root.style.overflow = "hidden";
+      root.style.overscrollBehavior = "none";
+      body.style.overflow = "hidden";
+      body.style.overscrollBehavior = "none";
+      window.addEventListener("scroll", keepPageAnchored, { passive: true });
+      keepPageAnchored();
+    }
+
+    return () => {
+      root.style.overflow = previousRootOverflow;
+      root.style.overscrollBehavior = previousRootOverscroll;
+      body.style.overflow = previousBodyOverflow;
+      body.style.overscrollBehavior = previousBodyOverscroll;
+      window.removeEventListener("scroll", keepPageAnchored);
+    };
+  }, [isPromptFocused]);
 
   return (
-    <div className="relative z-20 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0">
+    <>
+    <div className="fixed inset-x-0 bottom-0 z-30 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:relative sm:inset-auto sm:z-20 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0">
       <div style={{ width: "min(980px, 100%)" }}>
         <div className="overflow-hidden rounded-[22px] border border-stone-200 bg-white shadow-[0_14px_60px_-42px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:shadow-none">
           <input
@@ -107,13 +195,27 @@ export function ImageComposer({
           <div
             className="relative cursor-text"
             onClick={() => {
-              textareaRef.current?.focus();
+              textareaRef.current?.focus({ preventScroll: true });
+              keepPageAnchored();
             }}
           >
+            <div
+              className="relative transition-transform duration-150 sm:translate-y-0"
+              style={{ transform: keyboardOffset > 0 ? `translateY(-${keyboardOffset}px)` : undefined }}
+            >
             <Textarea
               ref={textareaRef}
               value={prompt}
               onChange={(event) => onPromptChange(event.target.value)}
+              onFocus={() => {
+                setIsPromptFocused(true);
+                keepPageAnchored();
+              }}
+              onBlur={() => {
+                setIsPromptFocused(false);
+                setKeyboardOffset(0);
+                keepPageAnchored();
+              }}
               placeholder="输入你想要生成的画面"
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -122,13 +224,27 @@ export function ImageComposer({
                 }
               }}
               className={cn(
-                "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
+                "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pb-10 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
+                shouldExpandPromptInput && "max-h-[40dvh] min-h-[128px]",
+                isPromptExpanded && "max-h-[52dvh] min-h-[188px] sm:min-h-[260px]",
                 referenceImages.length > 0 && "min-h-[156px] pb-[112px] sm:min-h-[176px] sm:pb-32",
               )}
             />
             <button
               type="button"
-              className="absolute top-3 right-3 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:top-5 sm:right-5 sm:h-9 sm:px-3 sm:text-xs"
+              className="absolute right-3 top-3 z-10 inline-flex size-8 items-center justify-center rounded-full border border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur transition hover:bg-stone-100 hover:text-stone-950 sm:right-5 sm:top-5 sm:size-9"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsPromptExpanded((current) => !current);
+              }}
+              aria-label={isPromptExpanded ? "缩小输入框" : "放大输入框"}
+              title={isPromptExpanded ? "缩小输入框" : "放大输入框"}
+            >
+              {isPromptExpanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            </button>
+            <button
+              type="button"
+              className="absolute right-3 bottom-3 z-10 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50/95 px-2.5 text-[11px] font-medium text-amber-700 shadow-sm backdrop-blur transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:bottom-20 sm:right-5 sm:h-9 sm:px-3 sm:text-xs"
               onClick={(event) => {
                 event.stopPropagation();
                 void onPolishPrompt();
@@ -163,14 +279,19 @@ export function ImageComposer({
                 ))}
               </div>
             ) : null}
+            </div>
 
-            <div className="border-t border-stone-100 bg-white px-3 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6" onClick={(event) => event.stopPropagation()}>
+            <div
+              className="touch-none overscroll-contain border-t border-stone-100 bg-white px-2 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:touch-auto sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6"
+              onClick={(event) => event.stopPropagation()}
+              onTouchMove={(event) => event.preventDefault()}
+            >
               <div className="flex items-end justify-between gap-2 sm:gap-3">
-                <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
+                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
                   <button
                     type="button"
                     className={cn(
-                      "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[11px] font-medium transition sm:px-3 sm:text-xs",
+                      "inline-flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-full border px-0 text-[11px] font-medium transition min-[390px]:w-auto min-[390px]:px-3 sm:px-3 sm:text-xs",
                       referenceImages.length > 0
                         ? "border-stone-900 bg-stone-950 text-white"
                         : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50",
@@ -181,21 +302,21 @@ export function ImageComposer({
                     <ImagePlus className="size-3.5" />
                     {referenceImages.length > 0 ? referenceImages.length : ""}
                   </button>
-                  <div className="shrink-0 rounded-full bg-stone-100 px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
+                  <div className="max-w-[58px] shrink overflow-hidden truncate rounded-full bg-stone-100 px-2 py-1.5 text-[10px] font-medium text-stone-600 min-[390px]:max-w-[78px] sm:max-w-none sm:px-3 sm:py-2 sm:text-xs">
                     <span className="hidden sm:inline">剩余额度 </span>{availableQuota}
                   </div>
                   {runningTaskCount > 0 && (
-                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1.5 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
+                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1.5 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />
                       {runningTaskCount}<span className="hidden sm:inline"> 个处理中</span>
                     </div>
                   )}
                   {queuedTaskCount > 0 && (
-                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1.5 text-[10px] font-medium text-stone-600 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
+                    <div className="flex shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2 py-1.5 text-[10px] font-medium text-stone-600 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       {queuedTaskCount}<span className="hidden sm:inline"> 个排队中</span>
                     </div>
                   )}
-                  <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
+                  <div className="flex h-9 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
                     <span className="text-[11px] font-medium text-stone-700 sm:text-sm">张数</span>
                     <Input
                       type="number"
@@ -205,7 +326,7 @@ export function ImageComposer({
                       step="1"
                       value={imageCount}
                       onChange={(event) => onImageCountChange(event.target.value)}
-                      className="h-7 w-[40px] border-0 bg-transparent px-0 text-center text-xs font-medium text-stone-700 shadow-none focus-visible:ring-0 sm:h-8 sm:w-[64px] sm:text-sm"
+                      className="h-7 w-[28px] border-0 bg-transparent px-0 text-center text-xs font-medium text-stone-700 shadow-none focus-visible:ring-0 min-[390px]:w-[34px] sm:h-8 sm:w-[64px] sm:text-sm"
                     />
                   </div>
                   <PopoverPrimitive.Root
@@ -217,12 +338,12 @@ export function ImageComposer({
                       }
                     }}
                   >
-                    <div className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]">
+                    <div className="relative flex h-9 min-w-0 shrink items-center gap-1 rounded-full border border-stone-200 bg-white px-2 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]">
                       <span className="font-medium text-stone-700 sm:text-sm">比例</span>
                       <PopoverPrimitive.Trigger asChild>
                         <button
                           type="button"
-                          className="flex h-7 w-[86px] min-w-0 items-center justify-between gap-1 bg-transparent text-left text-[11px] font-bold text-stone-700 min-[390px]:w-[112px] sm:h-8 sm:w-[132px] sm:text-xs"
+                          className="flex h-7 w-[70px] min-w-0 items-center justify-between gap-1 bg-transparent text-left text-[11px] font-bold text-stone-700 min-[390px]:w-[96px] sm:h-8 sm:w-[132px] sm:text-xs"
                         >
                           <span className="min-w-0 flex-1 truncate">
                             <span>{imageSizeValueLabel}</span>
@@ -263,8 +384,14 @@ export function ImageComposer({
                                     setHoveredSizeValue(null);
                                   }}
                                 >
-                                  <span className="min-w-0 truncate pr-2">{option.label}</span>
-                                  {active ? <Check className="size-4" /> : null}
+                                  <span className="min-w-0 flex-1 truncate pr-2">{option.label}</span>
+                                  <span className="flex h-7 w-10 shrink-0 items-center justify-center rounded-lg border border-stone-200 bg-white shadow-inner" aria-hidden="true">
+                                    <span
+                                      className="rounded-[3px] border border-stone-400 bg-stone-100"
+                                      style={getAspectThumbnailStyle(option.value)}
+                                    />
+                                  </span>
+                                  {active ? <Check className="ml-1 size-4 shrink-0" /> : null}
                                 </button>
                               );
                             })}
@@ -291,7 +418,7 @@ export function ImageComposer({
                   type="button"
                   onClick={() => void onSubmit()}
                   disabled={!prompt.trim()}
-                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-stone-950 text-white shadow-sm transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 sm:size-11"
+                  className="inline-flex h-11 w-11 min-w-11 aspect-square shrink-0 items-center justify-center rounded-full bg-stone-950 p-0 text-white shadow-sm transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 sm:h-11 sm:w-11"
                   aria-label="生成图片"
                 >
                   <ArrowUp className="size-3.5 sm:size-4" />
@@ -302,6 +429,16 @@ export function ImageComposer({
         </div>
       </div>
     </div>
+    <div
+      className={cn(
+        "h-[154px] shrink-0 sm:hidden",
+        shouldExpandPromptInput && "h-[214px]",
+        isPromptExpanded && "h-[274px]",
+        referenceImages.length > 0 && "h-[242px]",
+      )}
+      aria-hidden="true"
+    />
+    </>
   );
 }
 

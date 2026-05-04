@@ -532,6 +532,17 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     () => getImageTaskStats(conversations),
     [conversations],
   );
+  const scrollResultsToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const viewport = resultsViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior,
+    });
+  }, []);
   const deleteConfirmTitle = deleteConfirm?.type === "all" ? "清空历史记录" : deleteConfirm?.type === "one" ? "删除对话" : "";
   const deleteConfirmDescription =
     deleteConfirm?.type === "all"
@@ -673,11 +684,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    resultsViewportRef.current?.scrollTo({
-      top: resultsViewportRef.current.scrollHeight,
-      behavior: "smooth",
+    const behavior: ScrollBehavior = isLoadingHistory ? "auto" : "smooth";
+    let animationFrame = 0;
+    const timers: number[] = [];
+
+    scrollResultsToBottom(behavior);
+    animationFrame = window.requestAnimationFrame(() => scrollResultsToBottom("auto"));
+    [80, 220, 520, 1000].forEach((delay) => {
+      timers.push(window.setTimeout(() => scrollResultsToBottom("auto"), delay));
     });
-  }, [selectedConversation?.updatedAt, selectedConversation?.turns.length, selectedConversation]);
+
+    return () => {
+      if (animationFrame) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [
+    isLoadingHistory,
+    scrollResultsToBottom,
+    selectedConversation,
+    selectedConversation?.turns.length,
+    selectedConversation?.updatedAt,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1352,7 +1381,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       }
       setImagePrompt(nextPrompt);
       toast.success("AI已润色提示词");
-      window.setTimeout(() => textareaRef.current?.focus(), 0);
+      window.setTimeout(() => {
+        textareaRef.current?.focus({ preventScroll: true });
+        window.scrollTo(0, 0);
+      }, 0);
     } catch (error) {
       toast.error(getErrorMessage(error, "AI润色失败"));
     } finally {
