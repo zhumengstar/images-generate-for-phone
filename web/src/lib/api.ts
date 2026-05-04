@@ -232,6 +232,7 @@ export async function login(authKey: string, credentials?: { username: string; p
       "X-Device-Fingerprint": deviceFingerprint,
     },
     redirectOnUnauthorized: false,
+    skipAuth: !normalizedAuthKey,
   });
 }
 

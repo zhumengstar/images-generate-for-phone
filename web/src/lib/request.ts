@@ -6,6 +6,7 @@ import {clearStoredAuthSession, getStoredAuthKey} from "@/store/auth";
 
 type RequestConfig = AxiosRequestConfig & {
     redirectOnUnauthorized?: boolean;
+    skipAuth?: boolean;
 };
 
 type ErrorPayload = {
@@ -35,11 +36,12 @@ const request = axios.create({
 
 request.interceptors.request.use(async (config) => {
     const nextConfig = {...config};
-    const authKey = await getStoredAuthKey();
     const headers = {...(nextConfig.headers || {})} as Record<string, string>;
     if (!headers["X-Device-Fingerprint"]) {
         headers["X-Device-Fingerprint"] = await getDeviceFingerprint();
     }
+    const skipAuth = (nextConfig as RequestConfig).skipAuth === true;
+    const authKey = skipAuth ? "" : await getStoredAuthKey();
     if (authKey && !headers.Authorization) {
         headers.Authorization = `Bearer ${authKey}`;
     }
@@ -81,16 +83,18 @@ type RequestOptions = {
     body?: unknown;
     headers?: Record<string, string>;
     redirectOnUnauthorized?: boolean;
+    skipAuth?: boolean;
 };
 
 export async function httpRequest<T>(path: string, options: RequestOptions = {}) {
-    const {method = "GET", body, headers, redirectOnUnauthorized = true} = options;
+    const {method = "GET", body, headers, redirectOnUnauthorized = true, skipAuth = false} = options;
     const config: RequestConfig = {
         url: path,
         method,
         data: body,
         headers,
         redirectOnUnauthorized,
+        skipAuth,
     };
     const response = await request.request<T>(config);
     return response.data;

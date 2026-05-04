@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { login } from "@/lib/api";
 import { useRedirectIfAuthenticated } from "@/lib/use-auth-guard";
-import { getDefaultRouteForRole, setStoredAuthSession } from "@/store/auth";
+import { clearStoredAuthSession, getDefaultRouteForRole, setStoredAuthSession } from "@/store/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,14 +22,16 @@ export default function LoginPage() {
 
   const handleLogin = async () => {
     const normalizedUsername = username.trim();
-    if (!normalizedUsername || !password) {
+    const normalizedPassword = password.trim();
+    if (!normalizedUsername || !normalizedPassword) {
       toast.error("请输入用户名和密码");
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const data = await login("", { username: normalizedUsername, password });
+      await clearStoredAuthSession();
+      const data = await login("", { username: normalizedUsername, password: normalizedPassword });
       const token = String(data.token || "").trim();
       if (!token) {
         throw new Error("登录成功但没有返回登录凭证");
