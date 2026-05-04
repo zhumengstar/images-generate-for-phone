@@ -51,7 +51,15 @@ export function useAuthGuard(allowedRoles?: AuthRole[]): UseAuthGuardResult {
           };
           await setStoredAuthSession(session);
         } catch {
-          session = null;
+          session =
+            roleList.length === 0
+              ? {
+                  key: "",
+                  role: "user",
+                  subjectId: "anonymous-user",
+                  name: "普通用户",
+                }
+              : null;
         }
       }
       if (!active) {
