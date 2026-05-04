@@ -49,20 +49,21 @@ export function ImageComposer({
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
   const imageSizeOptions = [
-    { value: "", label: "未指定" },
-    { value: "1:1", label: "1:1 (正方形)" },
-    { value: "21:9", label: "21:9 (超宽横版)" },
-    { value: "16:9", label: "16:9 (横版)" },
-    { value: "3:2", label: "3:2 (横版)" },
-    { value: "4:3", label: "4:3 (横版)" },
-    { value: "5:4", label: "5:4 (横版)" },
-    { value: "4:5", label: "4:5 (竖版)" },
-    { value: "3:4", label: "3:4 (竖版)" },
-    { value: "2:3", label: "2:3 (竖版)" },
-    { value: "9:16", label: "9:16 (竖版)" },
-    { value: "9:21", label: "9:21 (超高竖版)" },
+    { value: "", label: "未指定", description: "" },
+    { value: "1:1", label: "1:1 (正方形)", description: "正方形" },
+    { value: "21:9", label: "21:9 (超宽横版)", description: "超宽横版" },
+    { value: "16:9", label: "16:9 (横版)", description: "横版" },
+    { value: "3:2", label: "3:2 (横版)", description: "横版" },
+    { value: "4:3", label: "4:3 (横版)", description: "横版" },
+    { value: "5:4", label: "5:4 (横版)", description: "横版" },
+    { value: "4:5", label: "4:5 (竖版)", description: "竖版" },
+    { value: "3:4", label: "3:4 (竖版)", description: "竖版" },
+    { value: "2:3", label: "2:3 (竖版)", description: "竖版" },
+    { value: "9:16", label: "9:16 (竖版)", description: "竖版" },
+    { value: "9:21", label: "9:21 (超高竖版)", description: "超高竖版" },
   ];
-  const imageSizeLabel = imageSizeOptions.find((option) => option.value === imageSize)?.label || "未指定";
+  const selectedSizeOption = imageSizeOptions.find((option) => option.value === imageSize) || imageSizeOptions[0];
+  const imageSizeValueLabel = selectedSizeOption.value || selectedSizeOption.label;
 
   return (
     <div className="relative z-20 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 backdrop-blur sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0">
@@ -188,9 +189,14 @@ export function ImageComposer({
                       <PopoverPrimitive.Trigger asChild>
                         <button
                           type="button"
-                          className="flex h-7 w-[78px] items-center justify-between bg-transparent text-left text-xs font-bold text-stone-700 min-[390px]:w-[96px] sm:h-8 sm:w-[132px]"
+                          className="flex h-7 w-[86px] min-w-0 items-center justify-between gap-1 bg-transparent text-left text-[11px] font-bold text-stone-700 min-[390px]:w-[112px] sm:h-8 sm:w-[132px] sm:text-xs"
                         >
-                          <span className="truncate">{imageSizeLabel}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            <span>{imageSizeValueLabel}</span>
+                            {selectedSizeOption.description ? (
+                              <span className="hidden min-[390px]:inline"> {selectedSizeOption.description}</span>
+                            ) : null}
+                          </span>
                           <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
                         </button>
                       </PopoverPrimitive.Trigger>
@@ -219,7 +225,7 @@ export function ImageComposer({
                                 setIsSizeMenuOpen(false);
                               }}
                             >
-                              <span>{option.label}</span>
+                              <span className="min-w-0 truncate pr-2">{option.label}</span>
                               {active ? <Check className="size-4" /> : null}
                             </button>
                           );

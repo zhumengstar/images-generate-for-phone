@@ -255,9 +255,9 @@ export function ImageResults({
                             />
                           </button>
                           <div className="px-3 py-2.5 sm:py-3">
-                            <div className="min-w-0 text-xs text-stone-500">
-                              <span>结果 {index + 1}</span>
-                              {imageMeta ? <span className="ml-2 text-stone-400">{imageMeta}</span> : null}
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
+                              <span className="shrink-0">结果 {index + 1}</span>
+                              {imageMeta ? <span className="min-w-0 break-words text-stone-400">{imageMeta}</span> : null}
                             </div>
                           </div>
                         </div>
@@ -292,7 +292,7 @@ export function ImageResults({
                         className="break-inside-avoid overflow-hidden border border-stone-200/80 bg-stone-100/80"
                         style={getImageAspectStyle(turn.size)}
                       >
-                        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-8 text-center text-stone-500">
+                        <div className="flex h-full flex-col items-center justify-center gap-2 px-3 py-4 text-center text-stone-500 sm:gap-3 sm:px-6 sm:py-8">
                           <div className="rounded-full bg-white p-3 shadow-sm">
                             {turn.status === "queued" ? (
                               <Clock3 className="size-5" />
@@ -300,7 +300,7 @@ export function ImageResults({
                               <LoaderCircle className="size-5 animate-spin" />
                             )}
                           </div>
-                          <p className="text-sm">
+                          <p className="max-w-full px-1 text-xs leading-5 sm:text-sm">
                             {turn.status === "queued" ? "已加入当前对话队列..." : "正在后台处理图片，刷新不会中断..."}
                           </p>
                         </div>
