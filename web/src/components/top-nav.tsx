@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Github, LogIn } from "lucide-react";
+import { Github, LogIn, LogOut, UserRound } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { toast } from "sonner";
 
 import webConfig from "@/constants/common-env";
-import { getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
+import { clearStoredAuthSession, getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
 const adminNavItems = [{ href: "/", label: "图片生成" }];
@@ -76,6 +77,12 @@ export function TopNav() {
     window.dispatchEvent(new CustomEvent("image-mode-request", { detail: mode }));
   };
 
+  const handleLogout = async () => {
+    await clearStoredAuthSession();
+    toast.success("已退出，当前设备切换为访客");
+    window.location.replace("/");
+  };
+
   if (pathname === "/login" || session === undefined || !session) {
     return null;
   }
@@ -85,12 +92,12 @@ export function TopNav() {
   const roleLabel = session.role === "admin" ? "管理员" : isGuest ? "访客" : session.name || "普通用户";
 
   return (
-    <header className="shrink-0 border-b border-stone-100/70 bg-white/90 backdrop-blur sm:bg-transparent">
-      <div className="flex h-12 items-center justify-between gap-2 px-3 sm:h-12 sm:gap-3 sm:px-6">
-        <div className="flex min-w-0 items-center justify-between gap-2 sm:justify-start sm:gap-3">
+    <header className="shrink-0 border-b border-stone-100/70 bg-white/92 backdrop-blur sm:bg-white/75">
+      <div className="flex min-h-12 items-center justify-between gap-2 px-3 py-1.5 sm:min-h-12 sm:gap-3 sm:px-6 sm:py-1">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Link
             href="/"
-            className="min-w-0 shrink py-1 text-[15px] font-bold tracking-tight text-stone-950 transition hover:text-stone-700 sm:shrink-0"
+            className="min-w-0 shrink truncate py-1 text-[15px] font-bold tracking-tight text-stone-950 transition hover:text-stone-700 sm:shrink-0"
           >
             images-generate
           </Link>
@@ -98,7 +105,7 @@ export function TopNav() {
             href="https://github.com/zhumengstar/images-generate-for-phone"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center gap-1.5 py-1 text-sm text-stone-400 transition hover:text-stone-700"
+            className="hidden items-center gap-1.5 py-1 text-sm text-stone-400 transition hover:text-stone-700 sm:inline-flex"
             aria-label="GitHub repository"
           >
             <Github className="size-4" />
@@ -106,7 +113,7 @@ export function TopNav() {
           </a>
         </div>
         {isImagePagePath ? (
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <div className="grid grid-cols-2 gap-1 rounded-full bg-stone-100 p-1">
               <button
                 type="button"
@@ -136,11 +143,28 @@ export function TopNav() {
               <Link
                 href="/login"
                 className="inline-flex h-9 items-center gap-1 rounded-full bg-stone-950 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-stone-800 sm:px-4 sm:text-sm"
+                aria-label="登录"
               >
                 <LogIn className="size-3.5" />
                 登录
               </Link>
-            ) : null}
+            ) : (
+              <div className="flex h-9 items-center gap-1 rounded-full border border-stone-200 bg-white px-1.5 shadow-sm">
+                <span className="hidden max-w-[120px] items-center gap-1.5 truncate px-2 text-xs font-semibold text-stone-700 sm:inline-flex">
+                  <UserRound className="size-3.5 shrink-0 text-stone-400" />
+                  <span className="truncate">{roleLabel}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="inline-flex size-7 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-950"
+                  aria-label="退出登录"
+                  title="退出登录"
+                >
+                  <LogOut className="size-4" />
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <nav className="hide-scrollbar flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">

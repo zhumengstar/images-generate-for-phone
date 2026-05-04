@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
+import { ArrowLeft, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -58,16 +59,27 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-1rem)] w-full place-items-center px-4 py-6">
-      <Card className="w-full max-w-[430px] rounded-[24px] border-white/80 bg-white/95 shadow-[0_28px_90px_rgba(28,25,23,0.10)]">
-        <CardContent className="space-y-6 p-6 sm:p-8">
+    <div className="grid min-h-[calc(100vh-1rem)] w-full place-items-center bg-stone-50 px-4 py-6">
+      <Card className="w-full max-w-[430px] rounded-[22px] border-stone-200/80 bg-white shadow-[0_24px_80px_rgba(28,25,23,0.10)]">
+        <CardContent className="space-y-6 p-5 sm:p-7">
+          <div className="flex items-center justify-between gap-3">
+            <Link
+              href="/"
+              className="inline-flex size-9 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-950"
+              aria-label="返回"
+            >
+              <ArrowLeft className="size-4" />
+            </Link>
+            <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600">登录用户 20 张</span>
+          </div>
+
           <div className="space-y-3 text-center">
             <div className="mx-auto inline-flex size-12 items-center justify-center rounded-[16px] bg-stone-950 text-white shadow-sm">
               <LockKeyhole className="size-5" />
             </div>
             <div className="space-y-1.5">
               <h1 className="text-2xl font-semibold tracking-tight text-stone-950">登录后生成更多图片</h1>
-              <p className="text-sm leading-6 text-stone-500">访客可生成 5 张，登录用户可生成 20 张。</p>
+              <p className="text-sm leading-6 text-stone-500">访客可生成 5 张，登录后当前设备使用你的 20 张额度。</p>
             </div>
           </div>
 
@@ -121,6 +133,13 @@ export default function LoginPage() {
             {isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
             登录
           </Button>
+
+          <Link
+            href="/"
+            className="block text-center text-sm font-medium text-stone-500 transition hover:text-stone-950"
+          >
+            继续以访客身份使用
+          </Link>
         </CardContent>
       </Card>
     </div>
