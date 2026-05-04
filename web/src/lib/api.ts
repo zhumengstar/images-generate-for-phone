@@ -146,6 +146,26 @@ export type UserKey = {
   last_used_at: string | null;
 };
 
+export type WebUser = {
+  id: string;
+  username: string;
+  name: string;
+  role: "admin" | "user";
+  created_at: string | null;
+  last_used_at: string | null;
+  active_sessions: number;
+  device_count: number;
+  used_total: number;
+  quota_limit: number;
+  remaining_total: number;
+  password_saved: boolean;
+  device_usages: Array<{
+    device: string;
+    used: number;
+    remaining: number;
+  }>;
+};
+
 export type RegisterConfig = {
   enabled: boolean;
   mail: {
@@ -509,6 +529,10 @@ export async function fetchSystemLogs(filters: { type?: string; start_date?: str
 
 export async function fetchUserKeys() {
   return httpRequest<{ items: UserKey[] }>("/api/auth/users");
+}
+
+export async function fetchWebUsers() {
+  return httpRequest<{ items: WebUser[] }>("/api/web-users");
 }
 
 export async function createUserKey(name: string) {

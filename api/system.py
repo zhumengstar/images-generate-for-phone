@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
+import os
+
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict
 
 from api.support import extract_bearer_token, ip_fingerprint_identity, require_admin, require_identity, resolve_image_base_url
-from services.config import config
+from services.config import DATA_DIR, config
 from services.image_service import delete_images, list_images
 from services.log_service import log_service
 from services.proxy_service import test_proxy
 from services.web_user_service import web_user_service
+
+IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
+USER_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT", os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20")))
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -27,6 +33,22 @@ class ImageDeleteRequest(BaseModel):
     all_matching: bool = False
 
 
+def _load_ip_quotas() -> dict[str, int]:
+    try:
+        data = json.loads(IP_QUOTAS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    items: dict[str, int] = {}
+    for key, value in data.items():
+        try:
+            items[str(key)] = max(0, int(value or 0))
+        except (TypeError, ValueError):
+            continue
+    return items
+
+
 def create_router(app_version: str) -> APIRouter:
     router = APIRouter()
 
@@ -41,10 +63,11 @@ def create_router(app_version: str) -> APIRouter:
             body = {}
         username = str(body.get("username") or "").strip()
         password = str(body.get("password") or "")
+        device_fingerprint = str(body.get("device_fingerprint") or request.headers.get("x-device-fingerprint") or "").strip()
         issued_token = ""
         if username or password:
             try:
-                identity, issued_token = web_user_service.login(username, password)
+                identity, issued_token = web_user_service.login(username, password, device_fingerprint)
             except PermissionError as exc:
                 raise HTTPException(status_code=401, detail={"error": str(exc)}) from exc
             except ValueError as exc:
@@ -107,5 +130,10 @@ def create_router(app_version: str) -> APIRouter:
             "backend": storage.get_backend_info(),
             "health": storage.health_check(),
         }
+
+    @router.get("/api/web-users")
+    async def list_web_users(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return {"items": web_user_service.list_users(_load_ip_quotas(), USER_IMAGE_QUOTA_LIMIT)}
 
     return router

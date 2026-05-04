@@ -81,7 +81,7 @@ export function getSyncStoredAuthSession() {
 }
 
 export function getDefaultRouteForRole(role: AuthRole) {
-  return "/image";
+  return role === "admin" ? "/users" : "/image";
 }
 
 export async function getStoredAuthKey() {

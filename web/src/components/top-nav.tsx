@@ -10,7 +10,10 @@ import webConfig from "@/constants/common-env";
 import { clearStoredAuthSession, getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
-const adminNavItems = [{ href: "/", label: "图片生成" }];
+const adminNavItems = [
+  { href: "/", label: "图片生成" },
+  { href: "/users", label: "用户管理" },
+];
 const userNavItems = [{ href: "/", label: "图片生成" }];
 type ImageMode = "generate" | "edit";
 
@@ -139,6 +142,14 @@ export function TopNav() {
                 图片编辑
               </button>
             </div>
+            {!isGuest && session.role === "admin" ? (
+              <Link
+                href="/users"
+                className="hidden h-9 items-center rounded-full border border-stone-200 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950 sm:inline-flex"
+              >
+                用户
+              </Link>
+            ) : null}
             {isGuest ? (
               <Link
                 href="/login"
