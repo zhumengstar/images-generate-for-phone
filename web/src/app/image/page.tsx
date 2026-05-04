@@ -833,6 +833,14 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setReferenceImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
   }, []);
 
+  const handleClearReferenceImages = useCallback(() => {
+    setReferenceImageFiles([]);
+    setReferenceImages([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, []);
+
   const handleContinueEdit = useCallback(
     async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
       try {
@@ -1353,6 +1361,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
             onImageSizeChange={setImageSize}
             onReferenceImageChange={handleReferenceImageChange}
+            onClearReferenceImages={handleClearReferenceImages}
             onRemoveReferenceImage={handleRemoveReferenceImage}
             onPolishPrompt={handlePolishPrompt}
             onSubmit={handleSubmit}

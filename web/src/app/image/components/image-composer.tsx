@@ -23,6 +23,7 @@ type ImageComposerProps = {
   onImageCountChange: (value: string) => void;
   onImageSizeChange: (value: string) => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
+  onClearReferenceImages: () => void;
   onRemoveReferenceImage: (index: number) => void;
   onPolishPrompt: () => void | Promise<void>;
   onSubmit: () => void | Promise<void>;
@@ -64,6 +65,7 @@ export function ImageComposer({
   onImageCountChange,
   onImageSizeChange,
   onReferenceImageChange,
+  onClearReferenceImages,
   onRemoveReferenceImage,
   onPolishPrompt,
   onSubmit,
@@ -89,6 +91,7 @@ export function ImageComposer({
   const previewSizeOption =
     imageSizeOptions.find((option) => option.value === hoveredSizeValue) || selectedSizeOption;
   const previewAspectStyle = getAspectPreviewStyle(previewSizeOption.value);
+  const isEditMode = referenceImages.length > 0;
 
   return (
     <div className="relative z-20 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0">
@@ -110,6 +113,55 @@ export function ImageComposer({
               textareaRef.current?.focus();
             }}
           >
+            <div className="px-3 pt-3 sm:px-6 sm:pt-5" onClick={(event) => event.stopPropagation()}>
+              <div className="grid grid-cols-2 gap-2 rounded-lg bg-stone-100 p-1.5">
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-10 items-center justify-center gap-2 rounded-lg text-xs font-extrabold transition sm:h-11 sm:text-sm",
+                    !isEditMode
+                      ? "bg-stone-950 text-white shadow-[0_8px_18px_rgba(17,24,39,0.16)]"
+                      : "bg-transparent text-stone-500 hover:bg-white/70 hover:text-stone-800",
+                  )}
+                  onClick={() => {
+                    onClearReferenceImages();
+                    textareaRef.current?.focus();
+                  }}
+                  aria-pressed={!isEditMode}
+                >
+                  <span
+                    className={cn(
+                      "inline-flex size-5 items-center justify-center rounded-full text-[11px] font-black sm:size-[22px]",
+                      !isEditMode ? "bg-emerald-300 text-emerald-950" : "bg-stone-300 text-white",
+                    )}
+                  >
+                    文
+                  </span>
+                  文生图
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-10 items-center justify-center gap-2 rounded-lg text-xs font-extrabold transition sm:h-11 sm:text-sm",
+                    isEditMode
+                      ? "bg-stone-950 text-white shadow-[0_8px_18px_rgba(17,24,39,0.16)]"
+                      : "bg-transparent text-stone-500 hover:bg-white/70 hover:text-stone-800",
+                  )}
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-pressed={isEditMode}
+                >
+                  <span
+                    className={cn(
+                      "inline-flex size-5 items-center justify-center rounded-full text-[11px] font-black sm:size-[22px]",
+                      isEditMode ? "bg-emerald-300 text-emerald-950" : "bg-stone-300 text-white",
+                    )}
+                  >
+                    图
+                  </span>
+                  图片编辑
+                </button>
+              </div>
+            </div>
             <Textarea
               ref={textareaRef}
               value={prompt}
@@ -122,7 +174,7 @@ export function ImageComposer({
                 }
               }}
               className={cn(
-                "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
+                "max-h-[28dvh] min-h-[68px] resize-none rounded-[22px] border-0 bg-transparent px-4 pt-3 pr-14 pb-2 text-[16px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 sm:max-h-none sm:min-h-[128px] sm:rounded-[32px] sm:px-6 sm:pt-4 sm:pr-20 sm:pb-20 sm:text-[15px] sm:leading-7",
                 referenceImages.length > 0 && "min-h-[132px] pb-[76px] sm:pb-20",
               )}
             />
