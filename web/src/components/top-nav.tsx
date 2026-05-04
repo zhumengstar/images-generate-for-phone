@@ -35,7 +35,17 @@ export function TopNav() {
       if (!active) {
         return;
       }
-      setSession(storedSession);
+      setSession(
+        storedSession ||
+          (pathname === "/image"
+            ? {
+                key: "",
+                role: "user",
+                subjectId: "anonymous-user",
+                name: "普通用户",
+              }
+            : null),
+      );
     };
 
     void load();
