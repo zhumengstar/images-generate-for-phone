@@ -86,7 +86,7 @@ export type ImageResponse = {
   ip_quota?: {
     user_id?: string;
     name?: string;
-    type?: "guest" | "user";
+    type?: "guest" | "user" | "admin";
     ip: string;
     fingerprint: string;
     limit: number;
@@ -97,7 +97,7 @@ export type ImageResponse = {
 export type IpQuotaResponse = {
   user_id?: string;
   name?: string;
-  type?: "guest" | "user";
+  type?: "guest" | "user" | "admin";
   ip: string;
   fingerprint: string;
   limit: number;

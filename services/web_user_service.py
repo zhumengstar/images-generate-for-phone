@@ -144,23 +144,30 @@ class WebUserService:
                 self._items.append(matched_item)
 
             token = f"wu-{secrets.token_urlsafe(32)}"
-            for index, raw_item in enumerate(self._items):
-                next_item = dict(raw_item)
-                sessions = _sessions(next_item) if index == matched_index or isinstance(next_item.get("sessions"), dict) else {}
-                sessions.pop(normalized_device, None)
-                next_item["sessions"] = sessions
-                if index != matched_index and not sessions:
-                    next_item["token"] = ""
-                if index != matched_index and _clean(next_item.get("device_fingerprint")) == normalized_device:
-                    next_item["device_fingerprint"] = ""
-                self._items[index] = next_item
+            matched_role = self._public_item(self._items[matched_index]).get("role")
+            is_admin_login = matched_role == "admin"
+            session_key = f"admin|{uuid.uuid4().hex[:16]}" if is_admin_login else normalized_device
+
+            if not is_admin_login:
+                for index, raw_item in enumerate(self._items):
+                    next_item = dict(raw_item)
+                    item_role = self._public_item(next_item).get("role")
+                    sessions = _sessions(next_item) if index == matched_index or isinstance(next_item.get("sessions"), dict) else {}
+                    if item_role != "admin":
+                        sessions.pop(normalized_device, None)
+                    next_item["sessions"] = sessions
+                    if index != matched_index and item_role != "admin" and not sessions:
+                        next_item["token"] = ""
+                    if index != matched_index and item_role != "admin" and _clean(next_item.get("device_fingerprint")) == normalized_device:
+                        next_item["device_fingerprint"] = ""
+                    self._items[index] = next_item
 
             next_item = dict(self._items[matched_index])
             sessions = _sessions(next_item)
-            sessions[normalized_device] = token
+            sessions[session_key] = token
             next_item["sessions"] = sessions
             next_item["token"] = token
-            next_item["device_fingerprint"] = normalized_device
+            next_item["device_fingerprint"] = "" if is_admin_login else normalized_device
             next_item["last_used_at"] = _now_iso()
             self._items[matched_index] = next_item
             self._save()

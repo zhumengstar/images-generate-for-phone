@@ -83,6 +83,20 @@ function formatAvailableQuota(accounts: Account[]) {
   return String(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
 }
 
+function formatIpQuota(quota: IpQuotaResponse | null) {
+  if (!quota) {
+    return "--/5";
+  }
+  return quota.limit < 0 ? "不限" : `${quota.remaining}/${quota.limit}`;
+}
+
+function formatIpQuotaType(quota: IpQuotaResponse | null) {
+  if (quota?.type === "admin") {
+    return "管理员";
+  }
+  return quota?.type === "user" ? "用户" : "访客";
+}
+
 function createId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -1213,8 +1227,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    if (ipQuota && parsedCount > ipQuota.remaining) {
-      toast.error(`当前${ipQuota.type === "user" ? "用户" : "访客"}剩余额度不足，还剩 ${ipQuota.remaining} 张`);
+    if (ipQuota && ipQuota.limit >= 0 && parsedCount > ipQuota.remaining) {
+      toast.error(`当前${formatIpQuotaType(ipQuota)}剩余额度不足，还剩 ${ipQuota.remaining} 张`);
       return;
     }
 
@@ -1350,10 +1364,10 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
                 <span className="font-medium">剩余额度</span>
-                <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/5"}</span>
+                <span className="font-mono">{formatIpQuota(ipQuota)}</span>
               </span>
               <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
-                <span className="shrink-0 font-medium text-stone-700">{ipQuota?.type === "user" ? "用户" : "访客"}</span>
+                <span className="shrink-0 font-medium text-stone-700">{formatIpQuotaType(ipQuota)}</span>
                 <span className="min-w-0 truncate font-mono">{ipQuota?.name || ipQuota?.user_id || "--"}</span>
               </span>
               <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
@@ -1409,7 +1423,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             prompt={imagePrompt}
             imageCount={imageCount}
             imageSize={imageSize}
-            availableQuota={ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/5"}
+            availableQuota={formatIpQuota(ipQuota)}
             queuedTaskCount={taskStats.queued}
             runningTaskCount={taskStats.running}
             isPolishingPrompt={isPolishingPrompt}

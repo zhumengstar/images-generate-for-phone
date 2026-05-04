@@ -68,6 +68,17 @@ def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, obj
     if token:
         identity = require_identity(authorization)
         subject_id = str(identity.get("id") or "").strip() or "user"
+        role = str(identity.get("role") or "user")
+        if role == "admin":
+            return {
+                "key": f"admin|{subject_id}",
+                "user_id": subject_id,
+                "name": identity.get("name") or subject_id,
+                "type": "admin",
+                "limit": -1,
+                "ip": ip,
+                "fingerprint": fingerprint,
+            }
         return {
             "key": f"user|{subject_id}|{fingerprint}",
             "user_id": subject_id,
@@ -126,6 +137,8 @@ def _save_ip_quotas(items: dict[str, int]) -> None:
 
 
 def _consume_ip_quota(quota_key: str, limit: int, count: int) -> int:
+    if limit < 0:
+        return -1
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
         used = max(0, int(items.get(quota_key, 0)))
@@ -141,6 +154,8 @@ def _consume_ip_quota(quota_key: str, limit: int, count: int) -> int:
 
 
 def _refund_ip_quota(quota_key: str, count: int) -> None:
+    if quota_key.startswith("admin|"):
+        return
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
         items[quota_key] = max(0, int(items.get(quota_key, 0)) - count)
@@ -148,6 +163,8 @@ def _refund_ip_quota(quota_key: str, count: int) -> None:
 
 
 def _remaining_ip_quota(quota_key: str, limit: int) -> int:
+    if limit < 0:
+        return -1
     with IP_QUOTA_LOCK:
         used = _load_ip_quotas().get(quota_key, 0)
         return max(0, limit - used)
