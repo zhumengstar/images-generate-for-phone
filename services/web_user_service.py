@@ -216,7 +216,7 @@ class WebUserService:
                     **public,
                     "username": public.get("name"),
                     "active_sessions": len(sessions),
-                    "device_count": len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages}),
+                    "device_count": 0 if is_admin else len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages}),
                     "used_total": used_total,
                     "quota_limit": -1 if is_admin else user_limit,
                     "remaining_total": -1 if is_admin else max(0, user_limit - used_total),
