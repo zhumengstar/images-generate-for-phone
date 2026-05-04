@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ArrowLeft, LoaderCircle, LockKeyhole } from "lucide-react";
+import { ArrowLeft, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -89,39 +89,45 @@ export default function LoginPage() {
             <label htmlFor="username" className="block text-sm font-medium text-stone-700">
               用户名
             </label>
-            <Input
-              id="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void handleLogin();
-                }
-              }}
-              placeholder="自定义用户名"
-              className="h-12 rounded-2xl border-stone-200 bg-white px-4 text-[15px]"
-              autoComplete="username"
-            />
+            <div className="relative">
+              <UserRound className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
+              <Input
+                id="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleLogin();
+                  }
+                }}
+                placeholder="自定义用户名"
+                className="h-12 rounded-2xl border-stone-200 bg-white pl-10 pr-4 text-[15px]"
+                autoComplete="username"
+              />
+            </div>
           </div>
 
           <div className="space-y-2.5">
             <label htmlFor="password" className="block text-sm font-medium text-stone-700">
               密码
             </label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void handleLogin();
-                }
-              }}
-              placeholder="自定义密码"
-              className="h-12 rounded-2xl border-stone-200 bg-white px-4 text-[15px]"
-              autoComplete="current-password"
-            />
+            <div className="relative">
+              <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleLogin();
+                  }
+                }}
+                placeholder="自定义密码"
+                className="h-12 rounded-2xl border-stone-200 bg-white pl-10 pr-4 text-[15px]"
+                autoComplete="current-password"
+              />
+            </div>
           </div>
 
           <Button
