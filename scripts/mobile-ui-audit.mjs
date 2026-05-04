@@ -114,6 +114,31 @@ async function capture(client, filePath) {
   await writeFile(filePath, Buffer.from(result.data, "base64"));
 }
 
+async function waitForAppReady(client) {
+  for (let i = 0; i < 80; i += 1) {
+    const state = await evaluate(client, js`
+      (() => {
+        const bodyText = document.body?.innerText || "";
+        return {
+          ready: document.readyState,
+          hasChromeError: bodyText.includes("This page couldn") || bodyText.includes("Reload to try again"),
+          hasTextarea: Boolean(document.querySelector("textarea")),
+          hasTopInfo: Boolean(document.querySelector("section[aria-label='页面信息']")),
+          hasComposer: Boolean(document.querySelector("section[aria-label='输入区域']")),
+        };
+      })()
+    `);
+    if (state.hasChromeError) {
+      throw new Error(`Chrome failed to load ${targetUrl}`);
+    }
+    if (state.ready === "complete" && state.hasTextarea && state.hasTopInfo && state.hasComposer) {
+      return state;
+    }
+    await delay(150);
+  }
+  throw new Error(`Image page did not become ready: ${targetUrl}`);
+}
+
 const chrome = spawn(chromePath, [
   "--headless=new",
   `--remote-debugging-port=${remotePort}`,
@@ -121,8 +146,9 @@ const chrome = spawn(chromePath, [
   "--disable-gpu",
   "--no-first-run",
   "--no-default-browser-check",
+  "--disable-background-networking",
   `--window-size=${viewport.width},${viewport.height}`,
-  "about:blank",
+  targetUrl,
 ], { stdio: "ignore" });
 
 let client;
@@ -136,7 +162,7 @@ try {
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: true });
   await client.send("Network.enable");
   await client.send("Page.navigate", { url: targetUrl });
-  await delay(1800);
+  await waitForAppReady(client);
 
   const auditDir = join(process.cwd(), "tmp", "mobile-ui-audit");
   await mkdir(auditDir, { recursive: true });
@@ -160,6 +186,8 @@ try {
         results: rect(results),
         composer: rect(composer),
         textarea: rect(textarea),
+        composerText: composer?.innerText || "",
+        bodyText: document.body?.innerText || "",
         collapseVisible: Boolean(byText("收起")),
         expandVisible: Boolean(byText("展开")),
         referencePreviewCount: composer ? composer.querySelectorAll("img").length : 0,
@@ -172,6 +200,11 @@ try {
   assertCheck(checks, "顶部信息区存在", rectOk(initial.topInfo) && initial.topInfo.height > 20, initial.topInfo);
   assertCheck(checks, "中间图片区域存在且独立占据高度", rectOk(initial.results) && initial.results.height > 200, initial.results);
   assertCheck(checks, "底部输入区域贴底", rectOk(initial.composer) && Math.abs(initial.composer.bottom - initial.viewport.height) <= 2, initial.composer);
+  assertCheck(checks, "底部输入区不显示剩余额度", !initial.composerText.includes("剩余额度"), { composerText: initial.composerText });
+  assertCheck(checks, "页面不显示公网 IP 和指纹", !initial.bodyText.includes("公网 IP") && !initial.bodyText.includes("指纹"), {
+    hasPublicIp: initial.bodyText.includes("公网 IP"),
+    hasFingerprint: initial.bodyText.includes("指纹"),
+  });
   assertCheck(checks, "未上传图片时参考图区不出现", initial.referencePreviewCount === 0, { referencePreviewCount: initial.referencePreviewCount });
   assertCheck(checks, "顶部收起按钮可见", initial.collapseVisible || initial.expandVisible, { collapseVisible: initial.collapseVisible, expandVisible: initial.expandVisible });
 
