@@ -30,8 +30,23 @@ function errorMessageFromValue(value: unknown): string {
     return errorMessageFromValue(item.error);
 }
 
+function resolveApiBaseUrl() {
+    const configured = webConfig.apiUrl.replace(/\/$/, "");
+    if (!configured || typeof window === "undefined") {
+        return configured;
+    }
+    try {
+        const currentHost = window.location.hostname;
+        const configuredUrl = new URL(configured, window.location.origin);
+        const isLocalPage = currentHost === "localhost" || currentHost === "127.0.0.1";
+        return isLocalPage || configuredUrl.host === window.location.host ? configured : "";
+    } catch {
+        return "";
+    }
+}
+
 const request = axios.create({
-    baseURL: webConfig.apiUrl.replace(/\/$/, ""),
+    baseURL: resolveApiBaseUrl(),
 });
 
 request.interceptors.request.use(async (config) => {
