@@ -10,10 +10,10 @@ import { getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
 const adminNavItems = [
-  { href: "/image", label: "图片生成" },
+  { href: "/", label: "图片生成" },
 ];
 
-const userNavItems = [{ href: "/image", label: "图片生成" }];
+const userNavItems = [{ href: "/", label: "图片生成" }];
 
 export function TopNav() {
   const pathname = usePathname();
@@ -65,7 +65,7 @@ export function TopNav() {
       <div className="flex h-12 items-center justify-between gap-2 px-3 sm:h-12 sm:gap-3 sm:px-6">
         <div className="flex items-center justify-between gap-2 sm:justify-start sm:gap-3">
           <Link
-            href="/image"
+            href="/"
             className="shrink-0 py-1 text-[15px] font-bold tracking-tight text-stone-950 transition hover:text-stone-700"
           >
             images-generate
@@ -83,7 +83,7 @@ export function TopNav() {
         </div>
         <nav className="hide-scrollbar flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">
           {navItems.map((item) => {
-            const active = pathname === item.href || (pathname === "/" && item.href === "/image");
+            const active = pathname === item.href || (pathname.startsWith("/image") && item.href === "/");
             return (
               <Link
                 key={item.href}
