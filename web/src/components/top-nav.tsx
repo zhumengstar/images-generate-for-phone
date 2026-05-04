@@ -2,28 +2,27 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Github } from "lucide-react";
+import { Github, LogIn } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 import webConfig from "@/constants/common-env";
 import { getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
-const adminNavItems = [
-  { href: "/", label: "图片生成" },
-];
-
+const adminNavItems = [{ href: "/", label: "图片生成" }];
 const userNavItems = [{ href: "/", label: "图片生成" }];
 type ImageMode = "generate" | "edit";
 
+const anonymousImageSession: StoredAuthSession = {
+  key: "",
+  role: "user",
+  subjectId: "anonymous-user",
+  name: "访客",
+  isGuest: true,
+};
+
 export function TopNav() {
   const pathname = usePathname();
-  const anonymousImageSession: StoredAuthSession = {
-    key: "",
-    role: "user",
-    subjectId: "anonymous-user",
-    name: "普通用户",
-  };
   const isImagePagePath = pathname === "/" || pathname === "/image" || pathname.startsWith("/image/");
   const [session, setSession] = useState<StoredAuthSession | null | undefined>(
     isImagePagePath ? anonymousImageSession : undefined,
@@ -35,10 +34,7 @@ export function TopNav() {
 
     const load = async () => {
       if (pathname === "/login") {
-        if (!active) {
-          return;
-        }
-        setSession(null);
+        if (active) setSession(null);
         return;
       }
 
@@ -85,7 +81,8 @@ export function TopNav() {
   }
 
   const navItems = session.role === "admin" ? adminNavItems : userNavItems;
-  const roleLabel = session.role === "admin" ? "管理员" : "普通用户";
+  const isGuest = Boolean(session.isGuest) || !session.key;
+  const roleLabel = session.role === "admin" ? "管理员" : isGuest ? "访客" : session.name || "普通用户";
 
   return (
     <header className="shrink-0 border-b border-stone-100/70 bg-white/90 backdrop-blur sm:bg-transparent">
@@ -109,30 +106,41 @@ export function TopNav() {
           </a>
         </div>
         {isImagePagePath ? (
-          <div className="ml-auto grid shrink-0 grid-cols-2 gap-1 rounded-full bg-stone-100 p-1">
-            <button
-              type="button"
-              className={cn(
-                "h-8 rounded-full px-2.5 text-[12px] font-extrabold transition sm:px-4 sm:text-sm",
-                imageMode === "generate" ? "bg-stone-950 text-white shadow-sm" : "text-stone-500 hover:bg-white",
-              )}
-              onClick={() => requestImageMode("generate")}
-              aria-pressed={imageMode === "generate"}
-            >
-              文生图
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "h-8 rounded-full px-2.5 text-[12px] font-extrabold transition sm:px-4 sm:text-sm",
-                imageMode === "edit" ? "bg-stone-950 text-white shadow-sm" : "cursor-default text-stone-500",
-              )}
-              onClick={(event) => event.preventDefault()}
-              aria-pressed={imageMode === "edit"}
-              tabIndex={-1}
-            >
-              图片编辑
-            </button>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <div className="grid grid-cols-2 gap-1 rounded-full bg-stone-100 p-1">
+              <button
+                type="button"
+                className={cn(
+                  "h-8 rounded-full px-2.5 text-[12px] font-extrabold transition sm:px-4 sm:text-sm",
+                  imageMode === "generate" ? "bg-stone-950 text-white shadow-sm" : "text-stone-500 hover:bg-white",
+                )}
+                onClick={() => requestImageMode("generate")}
+                aria-pressed={imageMode === "generate"}
+              >
+                文生图
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "h-8 rounded-full px-2.5 text-[12px] font-extrabold transition sm:px-4 sm:text-sm",
+                  imageMode === "edit" ? "bg-stone-950 text-white shadow-sm" : "cursor-default text-stone-500",
+                )}
+                onClick={(event) => event.preventDefault()}
+                aria-pressed={imageMode === "edit"}
+                tabIndex={-1}
+              >
+                图片编辑
+              </button>
+            </div>
+            {isGuest ? (
+              <Link
+                href="/login"
+                className="inline-flex h-9 items-center gap-1 rounded-full bg-stone-950 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-stone-800 sm:px-4 sm:text-sm"
+              >
+                <LogIn className="size-3.5" />
+                登录
+              </Link>
+            ) : null}
           </div>
         ) : (
           <nav className="hide-scrollbar flex min-w-0 flex-1 justify-end gap-1 overflow-x-auto sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">

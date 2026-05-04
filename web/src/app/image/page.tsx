@@ -1214,7 +1214,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
 
     if (ipQuota && parsedCount > ipQuota.remaining) {
-      toast.error(`当前公网 IP 剩余额度不足，还剩 ${ipQuota.remaining} 张`);
+      toast.error(`当前${ipQuota.type === "user" ? "用户" : "访客"}剩余额度不足，还剩 ${ipQuota.remaining} 张`);
       return;
     }
 
@@ -1350,11 +1350,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             <div className="hide-scrollbar flex flex-nowrap gap-1.5 overflow-x-auto border-b border-stone-200/70 bg-white/92 px-3 py-2 text-[11px] leading-5 text-stone-500 shadow-sm sm:flex-wrap sm:overflow-visible sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
                 <span className="font-medium">剩余额度</span>
-                <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}</span>
+                <span className="font-mono">{ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/5"}</span>
               </span>
               <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
-                <span className="shrink-0 font-medium text-stone-700">User</span>
-                <span className="min-w-0 truncate font-mono">{ipQuota?.user_id || "--"}</span>
+                <span className="shrink-0 font-medium text-stone-700">{ipQuota?.type === "user" ? "用户" : "访客"}</span>
+                <span className="min-w-0 truncate font-mono">{ipQuota?.name || ipQuota?.user_id || "--"}</span>
               </span>
               <span className="inline-flex max-w-[72vw] shrink-0 items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 sm:max-w-full">
                 <span className="shrink-0 font-medium text-stone-700">公网 IP</span>
@@ -1409,7 +1409,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             prompt={imagePrompt}
             imageCount={imageCount}
             imageSize={imageSize}
-            availableQuota={ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/20"}
+            availableQuota={ipQuota ? `${ipQuota.remaining}/${ipQuota.limit}` : "--/5"}
             queuedTaskCount={taskStats.queued}
             runningTaskCount={taskStats.running}
             isPolishingPrompt={isPolishingPrompt}

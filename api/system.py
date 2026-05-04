@@ -9,6 +9,7 @@ from services.config import config
 from services.image_service import delete_images, list_images
 from services.log_service import log_service
 from services.proxy_service import test_proxy
+from services.web_user_service import web_user_service
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -32,13 +33,31 @@ def create_router(app_version: str) -> APIRouter:
     @router.post("/auth/login")
     async def login(request: Request, authorization: str | None = Header(default=None)):
         token = extract_bearer_token(authorization)
-        identity = require_identity(authorization) if token else ip_fingerprint_identity(request)
+        body = {}
+        try:
+            parsed = await request.json()
+            body = parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            body = {}
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        issued_token = ""
+        if username or password:
+            try:
+                identity, issued_token = web_user_service.login(username, password)
+            except PermissionError as exc:
+                raise HTTPException(status_code=401, detail={"error": str(exc)}) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        else:
+            identity = require_identity(authorization) if token else ip_fingerprint_identity(request)
         return {
             "ok": True,
             "version": app_version,
             "role": identity.get("role"),
             "subject_id": identity.get("id"),
             "name": identity.get("name"),
+            "token": issued_token,
             "ip": identity.get("ip"),
             "fingerprint": identity.get("fingerprint"),
         }

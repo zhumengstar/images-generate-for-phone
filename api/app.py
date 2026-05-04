@@ -23,11 +23,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import accounts, ai, image_tasks, register, system
-from api.support import client_public_ip, device_fingerprint, ip_fingerprint_identity, ip_fingerprint_key, resolve_web_asset, start_limited_account_watcher
+from api.support import client_public_ip, device_fingerprint, extract_bearer_token, ip_fingerprint_identity, ip_fingerprint_key, require_identity, resolve_web_asset, start_limited_account_watcher
 from services.config import DATA_DIR, config
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-IP_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20"))
+GUEST_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT", "5"))
+USER_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT", os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20")))
 IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "http://165.154.254.130:3000").rstrip("/")
 IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
 IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
@@ -61,6 +62,34 @@ def _quota_key(ip: str, fingerprint: str) -> str:
     return ip_fingerprint_key(ip, fingerprint)
 
 
+def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, object]:
+    authorization = request.headers.get("authorization")
+    token = extract_bearer_token(authorization)
+    if token:
+        identity = require_identity(authorization)
+        subject_id = str(identity.get("id") or "").strip() or "user"
+        return {
+            "key": f"user|{subject_id}|{fingerprint}",
+            "user_id": subject_id,
+            "name": identity.get("name") or subject_id,
+            "type": "user",
+            "limit": USER_IMAGE_QUOTA_LIMIT,
+            "ip": ip,
+            "fingerprint": fingerprint,
+        }
+
+    identity = ip_fingerprint_identity(request)
+    return {
+        "key": _quota_key(ip, fingerprint),
+        "user_id": identity["id"],
+        "name": identity.get("name") or identity["id"],
+        "type": "guest",
+        "limit": GUEST_IMAGE_QUOTA_LIMIT,
+        "ip": ip,
+        "fingerprint": fingerprint,
+    }
+
+
 def _proxy_authorization(request: Request) -> str:
     proxy_key = str(config.auth_key or "").strip()
     if proxy_key:
@@ -69,13 +98,15 @@ def _proxy_authorization(request: Request) -> str:
 
 
 def _ip_quota_payload(request: Request, ip: str, fingerprint: str) -> dict[str, object]:
-    identity = ip_fingerprint_identity(request)
+    subject = _quota_subject(request, ip, fingerprint)
     return {
-        "user_id": identity["id"],
+        "user_id": subject["user_id"],
+        "name": subject["name"],
+        "type": subject["type"],
         "ip": ip,
         "fingerprint": fingerprint,
-        "limit": IP_IMAGE_QUOTA_LIMIT,
-        "remaining": _remaining_ip_quota(ip, fingerprint),
+        "limit": subject["limit"],
+        "remaining": _remaining_ip_quota(str(subject["key"]), int(subject["limit"])),
     }
 
 
@@ -94,34 +125,32 @@ def _save_ip_quotas(items: dict[str, int]) -> None:
     IP_QUOTAS_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _consume_ip_quota(ip: str, fingerprint: str, count: int) -> int:
+def _consume_ip_quota(quota_key: str, limit: int, count: int) -> int:
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
-        key = _quota_key(ip, fingerprint)
-        used = max(0, int(items.get(key, 0)))
-        remaining = max(0, IP_IMAGE_QUOTA_LIMIT - used)
+        used = max(0, int(items.get(quota_key, 0)))
+        remaining = max(0, limit - used)
         if count > remaining:
             raise HTTPException(
                 status_code=429,
-                detail={"error": f"当前公网 IP + 浏览器指纹剩余额度不足，还剩 {remaining} 张"},
+                detail={"error": f"当前账号剩余额度不足，还剩 {remaining} 张"},
             )
-        items[key] = used + count
+        items[quota_key] = used + count
         _save_ip_quotas(items)
-        return max(0, IP_IMAGE_QUOTA_LIMIT - items[key])
+        return max(0, limit - items[quota_key])
 
 
-def _refund_ip_quota(ip: str, fingerprint: str, count: int) -> None:
+def _refund_ip_quota(quota_key: str, count: int) -> None:
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
-        key = _quota_key(ip, fingerprint)
-        items[key] = max(0, int(items.get(key, 0)) - count)
+        items[quota_key] = max(0, int(items.get(quota_key, 0)) - count)
         _save_ip_quotas(items)
 
 
-def _remaining_ip_quota(ip: str, fingerprint: str) -> int:
+def _remaining_ip_quota(quota_key: str, limit: int) -> int:
     with IP_QUOTA_LOCK:
-        used = _load_ip_quotas().get(_quota_key(ip, fingerprint), 0)
-        return max(0, IP_IMAGE_QUOTA_LIMIT - used)
+        used = _load_ip_quotas().get(quota_key, 0)
+        return max(0, limit - used)
 
 
 def _usable_image_count(data: dict[str, Any]) -> int:
@@ -493,6 +522,8 @@ def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
             task_key,
             ip=str(task.get("ip") or "").strip(),
             fingerprint=str(task.get("fingerprint") or "").strip(),
+            quota_key=str(task.get("quota_key") or task.get("owner") or "").strip(),
+            quota_limit=max(1, int(task.get("quota_limit") or USER_IMAGE_QUOTA_LIMIT)),
             count=max(1, int(work.get("count") or 1)),
             mode=str(task.get("mode") or "generate"),
             payload=work.get("payload") if isinstance(work.get("payload"), dict) else None,
@@ -553,6 +584,8 @@ def _run_ip_image_task(
     *,
     ip: str,
     fingerprint: str,
+    quota_key: str,
+    quota_limit: int,
     count: int,
     mode: str,
     payload: dict[str, Any] | None = None,
@@ -567,22 +600,22 @@ def _run_ip_image_task(
         else:
             status, data = _proxy_image_generation(payload or {}, headers)
         if status >= 400:
-            _refund_ip_quota(ip, fingerprint, count)
+            _refund_ip_quota(quota_key, count)
             message = _error_text(data) if isinstance(data, dict) else ""
             raise RuntimeError(message or f"图片生成失败 ({status})")
         usable_count = _usable_image_count(data) if isinstance(data, dict) else 0
         if usable_count < count:
-            _refund_ip_quota(ip, fingerprint, count - usable_count)
+            _refund_ip_quota(quota_key, count - usable_count)
         if usable_count == 0:
             raise RuntimeError("接口没有返回图片数据")
         if isinstance(data, dict):
             data = _recall_image_data(data, headers)
         stable_count = _stable_image_count(data) if isinstance(data, dict) else 0
         if stable_count == 0:
-            _refund_ip_quota(ip, fingerprint, usable_count)
+            _refund_ip_quota(quota_key, usable_count)
             raise RuntimeError("image completed but image recall failed")
         if stable_count < usable_count:
-            _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
+            _refund_ip_quota(quota_key, usable_count - stable_count)
         _update_ip_task(task_key, status="success", data=data.get("data", []), error="", work=None)
     except Exception as exc:
         _update_ip_task(task_key, status="error", data=[], error=str(exc) or "图片生成失败", work=None)
@@ -780,7 +813,8 @@ def create_app() -> FastAPI:
         fingerprint = _device_fingerprint(request)
         payload = await _read_json_object(request)
         count = max(1, min(2, int(payload.get("count") or 1)))
-        _refund_ip_quota(ip, fingerprint, count)
+        subject = _quota_subject(request, ip, fingerprint)
+        _refund_ip_quota(str(subject["key"]), count)
         return _ip_quota_payload(request, ip, fingerprint)
 
     @app.post("/api/ip-limited/prompt-polish")
@@ -812,7 +846,8 @@ def create_app() -> FastAPI:
     async def list_ip_image_tasks(request: Request, ids: str = ""):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
-        owner = _quota_key(ip, fingerprint)
+        subject = _quota_subject(request, ip, fingerprint)
+        owner = str(subject["key"])
         requested_ids = [item.strip() for item in ids.split(",") if item.strip()]
         tasks_to_ensure: list[tuple[str, dict[str, Any]]] = []
         with IP_IMAGE_TASKS_LOCK:
@@ -840,7 +875,8 @@ def create_app() -> FastAPI:
     async def create_ip_image_generation_task(request: Request):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
-        owner = _quota_key(ip, fingerprint)
+        subject = _quota_subject(request, ip, fingerprint)
+        owner = str(subject["key"])
         payload = await _read_json_object(request)
         task_id = str(payload.get("client_task_id") or "").strip()
         prompt = str(payload.get("prompt") or "").strip()
@@ -875,6 +911,8 @@ def create_app() -> FastAPI:
                         {
                             "ip": ip,
                             "fingerprint": fingerprint,
+                            "quota_key": str(subject["key"]),
+                            "quota_limit": int(subject["limit"]),
                             "model": task_model,
                             "size": task_size,
                             "work": {
@@ -888,11 +926,13 @@ def create_app() -> FastAPI:
                     _save_ip_tasks(items)
                 _ensure_ip_task_worker(task_key, existing)
                 return _public_ip_task(existing)
-            _consume_ip_quota(ip, fingerprint, 1)
+            _consume_ip_quota(str(subject["key"]), int(subject["limit"]), 1)
             now = _now_iso()
             task = {
                 "id": task_id,
                 "owner": owner,
+                "quota_key": str(subject["key"]),
+                "quota_limit": int(subject["limit"]),
                 "ip": ip,
                 "fingerprint": fingerprint,
                 "status": "queued",
@@ -926,7 +966,8 @@ def create_app() -> FastAPI:
     ):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
-        owner = _quota_key(ip, fingerprint)
+        subject = _quota_subject(request, ip, fingerprint)
+        owner = str(subject["key"])
         task_id = client_task_id.strip()
         if not task_id:
             raise HTTPException(status_code=400, detail={"error": "client_task_id is required"})
@@ -970,6 +1011,8 @@ def create_app() -> FastAPI:
                         {
                             "ip": ip,
                             "fingerprint": fingerprint,
+                            "quota_key": str(subject["key"]),
+                            "quota_limit": int(subject["limit"]),
                             "model": task_model,
                             "size": task_size,
                             "work": {
@@ -984,11 +1027,13 @@ def create_app() -> FastAPI:
                     _save_ip_tasks(items)
                 _ensure_ip_task_worker(task_key, existing)
                 return _public_ip_task(existing)
-            _consume_ip_quota(ip, fingerprint, 1)
+            _consume_ip_quota(str(subject["key"]), int(subject["limit"]), 1)
             now = _now_iso()
             task = {
                 "id": task_id,
                 "owner": owner,
+                "quota_key": str(subject["key"]),
+                "quota_limit": int(subject["limit"]),
                 "ip": ip,
                 "fingerprint": fingerprint,
                 "status": "queued",
@@ -1017,10 +1062,11 @@ def create_app() -> FastAPI:
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
         payload = await _read_json_object(request)
+        subject = _quota_subject(request, ip, fingerprint)
 
         count = max(1, min(2, int(payload.get("n") or 1)))
         payload["n"] = count
-        _consume_ip_quota(ip, fingerprint, count)
+        _consume_ip_quota(str(subject["key"]), int(subject["limit"]), count)
 
         headers = {
             "Content-Type": "application/json",
@@ -1030,21 +1076,21 @@ def create_app() -> FastAPI:
         }
         status, data = _proxy_image_generation(payload, headers)
         if status >= 400:
-            _refund_ip_quota(ip, fingerprint, count)
+            _refund_ip_quota(str(subject["key"]), count)
             return JSONResponse(status_code=status, content=data)
         usable_count = _usable_image_count(data) if isinstance(data, dict) else 0
         if usable_count < count:
-            _refund_ip_quota(ip, fingerprint, count - usable_count)
+            _refund_ip_quota(str(subject["key"]), count - usable_count)
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片生成失败，接口没有返回图片数据"})
         if isinstance(data, dict):
             data = _recall_image_data(data, headers)
             stable_count = _stable_image_count(data)
             if stable_count == 0:
-                _refund_ip_quota(ip, fingerprint, usable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count)
                 return JSONResponse(status_code=502, content={"error": "image completed but image recall failed"})
             if stable_count < usable_count:
-                _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count - stable_count)
             data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 
@@ -1060,6 +1106,7 @@ def create_app() -> FastAPI:
     ):
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
+        subject = _quota_subject(request, ip, fingerprint)
         count = max(1, min(2, int(n or 1)))
         if not prompt.strip():
             raise HTTPException(status_code=400, detail={"error": "prompt is required"})
@@ -1067,7 +1114,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail={"error": "image is required"})
 
         files = await _read_edit_uploads(image)
-        _consume_ip_quota(ip, fingerprint, count)
+        _consume_ip_quota(str(subject["key"]), int(subject["limit"]), count)
         fields = {
             "prompt": prompt,
             "model": model or "gpt-image-2",
@@ -1083,21 +1130,21 @@ def create_app() -> FastAPI:
         }
         status, data = _proxy_image_edit(fields, files, headers)
         if status >= 400:
-            _refund_ip_quota(ip, fingerprint, count)
+            _refund_ip_quota(str(subject["key"]), count)
             return JSONResponse(status_code=status, content=data)
         usable_count = _usable_image_count(data) if isinstance(data, dict) else 0
         if usable_count < count:
-            _refund_ip_quota(ip, fingerprint, count - usable_count)
+            _refund_ip_quota(str(subject["key"]), count - usable_count)
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片编辑失败，接口没有返回图片数据"})
         if isinstance(data, dict):
             data = _recall_image_data(data, headers)
             stable_count = _stable_image_count(data)
             if stable_count == 0:
-                _refund_ip_quota(ip, fingerprint, usable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count)
                 return JSONResponse(status_code=502, content={"error": "image completed but image recall failed"})
             if stable_count < usable_count:
-                _refund_ip_quota(ip, fingerprint, usable_count - stable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count - stable_count)
             data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 

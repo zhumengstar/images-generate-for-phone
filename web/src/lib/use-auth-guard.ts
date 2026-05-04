@@ -8,7 +8,6 @@ import {
   getDefaultRouteForRole,
   getSyncStoredAuthSession,
   getStoredAuthSession,
-  setStoredAuthSession,
   type AuthRole,
   type StoredAuthSession,
 } from "@/store/auth";
@@ -16,6 +15,14 @@ import {
 type UseAuthGuardResult = {
   isCheckingAuth: boolean;
   session: StoredAuthSession | null;
+};
+
+const guestSession: StoredAuthSession = {
+  key: "",
+  role: "user",
+  subjectId: "guest",
+  name: "访客",
+  isGuest: true,
 };
 
 export function useAuthGuard(allowedRoles?: AuthRole[]): UseAuthGuardResult {
@@ -39,47 +46,38 @@ export function useAuthGuard(allowedRoles?: AuthRole[]): UseAuthGuardResult {
         return;
       }
 
-      let session = storedSession;
-      if (!session) {
+      let nextSession = storedSession;
+      if (!nextSession) {
         try {
           const data = await login("");
-          session = {
-            key: "",
+          nextSession = {
+            ...guestSession,
             role: data.role,
             subjectId: data.subject_id,
-            name: data.name,
+            name: data.name || "访客",
           };
-          await setStoredAuthSession(session);
         } catch {
-          session =
-            roleList.length === 0
-              ? {
-                  key: "",
-                  role: "user",
-                  subjectId: "anonymous-user",
-                  name: "普通用户",
-                }
-              : null;
+          nextSession = roleList.length === 0 ? guestSession : null;
         }
       }
       if (!active) {
         return;
       }
 
-      if (!session) {
+      if (!nextSession) {
         setSession(null);
         setIsCheckingAuth(false);
         return;
       }
 
-      if (roleList.length > 0 && !roleList.includes(session.role)) {
-        setSession(session);
+      if (roleList.length > 0 && !roleList.includes(nextSession.role)) {
+        setSession(nextSession);
         setIsCheckingAuth(false);
-        router.replace(getDefaultRouteForRole(session.role));
+        router.replace(getDefaultRouteForRole(nextSession.role));
         return;
       }
 
-      setSession(session);
+      setSession(nextSession);
       setIsCheckingAuth(false);
     };
 
@@ -105,7 +103,7 @@ export function useRedirectIfAuthenticated() {
         return;
       }
 
-      if (storedSession) {
+      if (storedSession && !storedSession.isGuest) {
         router.replace(getDefaultRouteForRole(storedSession.role));
         return;
       }

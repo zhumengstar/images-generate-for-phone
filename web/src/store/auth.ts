@@ -9,6 +9,7 @@ export type StoredAuthSession = {
   role: AuthRole;
   subjectId: string;
   name: string;
+  isGuest?: boolean;
 };
 
 export const AUTH_KEY_STORAGE_KEY = "images_generate_remote_image_auth_key";
@@ -35,6 +36,7 @@ function normalizeSession(value: unknown, fallbackKey = ""): StoredAuthSession |
 
   const candidate = value as Partial<StoredAuthSession>;
   const key = String(candidate.key || fallbackKey || "").trim();
+  const isGuest = Boolean(candidate.isGuest) || !key;
   const role = candidate.role === "admin" || candidate.role === "user" ? candidate.role : null;
   if (!role) {
     return null;
@@ -45,6 +47,7 @@ function normalizeSession(value: unknown, fallbackKey = ""): StoredAuthSession |
     role,
     subjectId: String(candidate.subjectId || "").trim(),
     name: String(candidate.name || "").trim(),
+    isGuest,
   };
 }
 
@@ -86,13 +89,18 @@ export async function getStoredAuthKey() {
     return "";
   }
   const syncKey = String(window.localStorage.getItem(AUTH_KEY_STORAGE_KEY) || "").trim();
-  if (syncKey) {
+  const syncSession = readSyncAuthSession();
+  if (syncKey && !syncSession?.isGuest) {
     return syncKey;
   }
   const storedKey = String((await authStorage.getItem<string>(AUTH_KEY_STORAGE_KEY)) || "").trim();
   if (storedKey) {
     const storedSession = await authStorage.getItem<StoredAuthSession>(AUTH_SESSION_STORAGE_KEY);
     const normalizedSession = normalizeSession(storedSession, storedKey);
+    if (normalizedSession?.isGuest) {
+      await clearStoredAuthSession();
+      return "";
+    }
     if (normalizedSession) {
       writeSyncAuthSession(normalizedSession);
     } else {
@@ -136,6 +144,10 @@ export async function getStoredAuthSession() {
 
   const normalizedSession = normalizeSession(storedSession, String(storedKey || ""));
   if (normalizedSession) {
+    if (normalizedSession.isGuest) {
+      await clearStoredAuthSession();
+      return null;
+    }
     if (normalizedSession.key !== String(storedKey || "").trim()) {
       await authStorage.setItem(AUTH_KEY_STORAGE_KEY, normalizedSession.key);
     }
@@ -160,7 +172,7 @@ export async function getStoredAuthSession() {
 
 export async function setStoredAuthSession(session: StoredAuthSession) {
   const normalizedSession = normalizeSession(session);
-  if (!normalizedSession) {
+  if (!normalizedSession || normalizedSession.isGuest) {
     await clearStoredAuthSession();
     return;
   }

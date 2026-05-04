@@ -85,6 +85,8 @@ export type ImageResponse = {
   data: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
   ip_quota?: {
     user_id?: string;
+    name?: string;
+    type?: "guest" | "user";
     ip: string;
     fingerprint: string;
     limit: number;
@@ -94,6 +96,8 @@ export type ImageResponse = {
 
 export type IpQuotaResponse = {
   user_id?: string;
+  name?: string;
+  type?: "guest" | "user";
   ip: string;
   fingerprint: string;
   limit: number;
@@ -128,6 +132,7 @@ export type LoginResponse = {
   role: AuthRole;
   subject_id: string;
   name: string;
+  token?: string;
   ip?: string;
   fingerprint?: string;
 };
@@ -193,13 +198,14 @@ function errorMessageFromValue(value: unknown): string {
   return errorMessageFromValue(item.error);
 }
 
-export async function login(authKey: string) {
+export async function login(authKey: string, credentials?: { username: string; password: string }) {
   const normalizedAuthKey = String(authKey || "").trim();
   const deviceFingerprint = await getDeviceFingerprint();
   return httpRequest<LoginResponse>("/auth/login", {
     method: "POST",
     body: {
       device_fingerprint: deviceFingerprint,
+      ...(credentials ? { username: credentials.username, password: credentials.password } : {}),
     },
     headers: {
       ...(normalizedAuthKey ? { Authorization: `Bearer ${normalizedAuthKey}` } : {}),
@@ -283,9 +289,11 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
 }
 
 export async function fetchIpQuota() {
+  const authKey = await getStoredAuthKey();
   const response = await fetch("/api/ip-limited/quota", {
     cache: "no-store",
     headers: {
+      Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": await getDeviceFingerprint(),
     },
   });
@@ -296,10 +304,12 @@ export async function fetchIpQuota() {
 }
 
 export async function refundIpQuota(count = 1) {
+  const authKey = await getStoredAuthKey();
   const response = await fetch("/api/ip-limited/quota/refund", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": await getDeviceFingerprint(),
     },
     body: JSON.stringify({ count }),
@@ -447,6 +457,7 @@ export async function createImageEditTask(
 }
 
 export async function fetchImageTasks(ids: string[]) {
+  const authKey = await getStoredAuthKey();
   const params = new URLSearchParams();
   if (ids.length > 0) {
     params.set("ids", ids.join(","));
@@ -454,6 +465,7 @@ export async function fetchImageTasks(ids: string[]) {
   const response = await fetch(`/api/ip-limited/image-tasks${params.toString() ? `?${params.toString()}` : ""}`, {
     cache: "no-store",
     headers: {
+      Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": await getDeviceFingerprint(),
     },
   });
