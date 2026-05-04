@@ -209,15 +209,17 @@ class WebUserService:
             ]
             used_total = sum(int(usage["used"]) for usage in device_usages)
             sessions = _sessions(item)
+            is_admin = public.get("role") == "admin"
+            real_session_devices = [key for key in sessions if not key.startswith("admin|") and key != "legacy"]
             users.append(
                 {
                     **public,
                     "username": public.get("name"),
                     "active_sessions": len(sessions),
-                    "device_count": len(device_usages),
+                    "device_count": len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages}),
                     "used_total": used_total,
-                    "quota_limit": user_limit,
-                    "remaining_total": max(0, user_limit - used_total),
+                    "quota_limit": -1 if is_admin else user_limit,
+                    "remaining_total": -1 if is_admin else max(0, user_limit - used_total),
                     "device_usages": device_usages,
                     "password_saved": bool(_clean(item.get("password_hash"))),
                 }

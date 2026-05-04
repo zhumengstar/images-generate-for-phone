@@ -25,6 +25,10 @@ function roleLabel(role: WebUser["role"]) {
   return role === "admin" ? "管理员" : "普通用户";
 }
 
+function formatUserQuota(user: WebUser) {
+  return user.quota_limit < 0 ? "不限" : `${user.used_total}/${user.quota_limit}`;
+}
+
 export default function UsersPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin"]);
   const [users, setUsers] = useState<WebUser[]>([]);
@@ -54,7 +58,7 @@ export default function UsersPage() {
     () => ({
       total: users.length,
       admins: users.filter((user) => user.role === "admin").length,
-      active: users.filter((user) => user.active_sessions > 0).length,
+      active: users.reduce((sum, user) => sum + Math.max(0, user.device_count), 0),
       used: users.reduce((sum, user) => sum + Math.max(0, user.used_total), 0),
     }),
     [users],
@@ -91,7 +95,7 @@ export default function UsersPage() {
           {[
             ["用户总数", stats.total],
             ["管理员", stats.admins],
-            ["已登录设备", stats.active],
+            ["占用设备", stats.active],
             ["总使用张数", stats.used],
           ].map(([label, value]) => (
             <Card key={label} className="rounded-2xl border-stone-200/80 bg-white shadow-sm">
@@ -149,14 +153,18 @@ export default function UsersPage() {
                         </td>
                         <td className="px-4 py-3 text-stone-600">{user.password_saved ? "已保存" : "未保存"}</td>
                         <td className="px-4 py-3 text-stone-600">
-                          {user.active_sessions} 个登录会话 / {user.device_count} 台用量设备
+                          {user.role === "admin"
+                            ? `${user.active_sessions} 个管理员会话`
+                            : `${user.active_sessions} 个登录会话 / ${user.device_count} 台设备`}
                         </td>
                         <td className="px-4 py-3">
                           <div className="font-semibold text-stone-950">
-                            {user.used_total}/{user.quota_limit}
+                            {formatUserQuota(user)}
                           </div>
                           <div className="mt-1 max-w-[260px] text-xs leading-5 text-stone-500">
-                            {user.device_usages.length > 0
+                            {user.quota_limit < 0
+                              ? "管理员生成图片不受额度限制"
+                              : user.device_usages.length > 0
                               ? user.device_usages
                                   .slice(0, 2)
                                   .map((usage) => `${usage.device.slice(0, 10)}: ${usage.used} 张`)
