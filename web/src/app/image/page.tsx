@@ -34,7 +34,6 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import {
   clearImageConversations,
   deleteImageConversation,
-  getImageConversationStats,
   listImageConversations,
   saveImageConversation,
   saveImageConversations,
@@ -51,11 +50,12 @@ const IMAGE_SIZE_STORAGE_KEY = "images-generate:image_last_size";
 const LEGACY_IMAGE_STORAGE_PREFIX = String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105);
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last_size`;
+const MAX_CONCURRENT_IMAGE_TASKS = 2;
 
 function clampImageCount(value: string) {
   return String(Math.min(2, Math.max(1, Math.floor(Number(value) || 1))));
 }
-const activeConversationQueueIds = new Set<string>();
+const activeImageTaskIds = new Set<string>();
 
 function buildConversationTitle(prompt: string) {
   const trimmed = prompt.trim();
@@ -283,7 +283,7 @@ function hasLoadingTurn(conversation: ImageConversation, status?: ImageTurnStatu
     (turn) =>
       (!status || turn.status === status) &&
       (turn.status === "queued" || turn.status === "generating") &&
-      turn.images.some((image) => image.status === "loading"),
+      turn.images.some((image) => image.status === "loading" && !activeImageTaskIds.has(getImageTaskKey(conversation.id, turn.id, image.id))),
   );
 }
 
@@ -295,8 +295,33 @@ function findRunnableConversation(items: ImageConversation[]) {
   );
 }
 
-function hasOtherGeneratingConversation(items: ImageConversation[], conversationId: string) {
-  return items.some((conversation) => conversation.id !== conversationId && hasLoadingTurn(conversation, "generating"));
+function getImageTaskKey(conversationId: string, turnId: string, imageId: string) {
+  return `${conversationId}:${turnId}:${imageId}`;
+}
+
+function getImageTaskStats(items: ImageConversation[]) {
+  let queued = 0;
+  let running = 0;
+
+  for (const conversation of items) {
+    for (const turn of conversation.turns) {
+      if (turn.status !== "queued" && turn.status !== "generating") {
+        continue;
+      }
+      for (const image of turn.images) {
+        if (image.status !== "loading") {
+          continue;
+        }
+        if (activeImageTaskIds.has(getImageTaskKey(conversation.id, turn.id, image.id))) {
+          running += 1;
+        } else {
+          queued += 1;
+        }
+      }
+    }
+  }
+
+  return { queued, running };
 }
 
 function deriveTurnStatus(turn: ImageTurn): Pick<ImageTurn, "status" | "error"> {
@@ -465,17 +490,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     [conversations, selectedConversationId],
   );
   const taskStats = useMemo(
-    () =>
-      conversations.reduce(
-        (sum, conversation) => {
-          const stats = getImageConversationStats(conversation);
-          return {
-            queued: sum.queued + stats.queued,
-            running: sum.running + stats.running,
-          };
-        },
-        { queued: 0, running: 0 },
-      ),
+    () => getImageTaskStats(conversations),
     [conversations],
   );
   const deleteConfirmTitle = deleteConfirm?.type === "all" ? "清空历史记录" : deleteConfirm?.type === "one" ? "删除对话" : "";
@@ -917,7 +932,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   /* eslint-disable react-hooks/preserve-manual-memoization */
   const runConversationQueue = useCallback(
     async (conversationId: string) => {
-      if (activeConversationQueueIds.size > 0) {
+      const availableSlots = MAX_CONCURRENT_IMAGE_TASKS - activeImageTaskIds.size;
+      if (availableSlots <= 0) {
         return;
       }
 
@@ -930,11 +946,20 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       if (!snapshot || !activeTurn) {
         return;
       }
-      if (activeTurn.status === "queued" && hasOtherGeneratingConversation(conversationsRef.current, conversationId)) {
+
+      const pendingImages = activeTurn.images
+        .filter(
+          (image) =>
+            image.status === "loading" &&
+            !activeImageTaskIds.has(getImageTaskKey(conversationId, activeTurn.id, image.id)),
+        )
+        .slice(0, availableSlots);
+      if (pendingImages.length === 0) {
         return;
       }
 
-      activeConversationQueueIds.add(conversationId);
+      const activeTaskKeys = pendingImages.map((image) => getImageTaskKey(conversationId, activeTurn.id, image.id));
+      activeTaskKeys.forEach((key) => activeImageTaskIds.add(key));
       try {
         await updateConversation(conversationId, (current) => {
           const conversation = current ?? snapshot;
@@ -956,7 +981,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           };
         });
 
-        const pendingImages = activeTurn.images.filter((image) => image.status === "loading");
         const updateGeneratedImage = async (generatedImage: StoredImage) => {
           await updateConversation(conversationId, (current) => {
             const conversation = current ?? snapshot;
@@ -1158,12 +1182,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
         toast.error(message);
       } finally {
-        activeConversationQueueIds.delete(conversationId);
-        if (activeConversationQueueIds.size === 0) {
+        activeTaskKeys.forEach((key) => activeImageTaskIds.delete(key));
+        while (activeImageTaskIds.size < MAX_CONCURRENT_IMAGE_TASKS) {
           const nextConversation = findRunnableConversation(conversationsRef.current);
-          if (nextConversation) {
-            void runConversationQueue(nextConversation.id);
+          if (!nextConversation) {
+            break;
           }
+          void runConversationQueue(nextConversation.id);
         }
       }
     },
@@ -1172,11 +1197,11 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
   useEffect(() => {
-    if (activeConversationQueueIds.size > 0) {
-      return;
-    }
-    const nextConversation = findRunnableConversation(conversations);
-    if (nextConversation) {
+    while (activeImageTaskIds.size < MAX_CONCURRENT_IMAGE_TASKS) {
+      const nextConversation = findRunnableConversation(conversations);
+      if (!nextConversation) {
+        break;
+      }
       void runConversationQueue(nextConversation.id);
     }
   }, [conversations, runConversationQueue]);
@@ -1241,7 +1266,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     await persistConversation(baseConversation);
     void runConversationQueue(conversationId);
 
-    const targetStats = getImageConversationStats(baseConversation);
+    const targetStats = getImageTaskStats([baseConversation]);
     if (targetStats.running > 0 || targetStats.queued > 1) {
       toast.success("已加入后台队列，刷新页面不会中断任务");
     } else if (!targetConversation) {
