@@ -17,7 +17,16 @@ const userNavItems = [{ href: "/image", label: "图片生成" }];
 
 export function TopNav() {
   const pathname = usePathname();
-  const [session, setSession] = useState<StoredAuthSession | null | undefined>(undefined);
+  const anonymousImageSession: StoredAuthSession = {
+    key: "",
+    role: "user",
+    subjectId: "anonymous-user",
+    name: "普通用户",
+  };
+  const isAnonymousImagePath = pathname === "/image" || pathname.startsWith("/image/");
+  const [session, setSession] = useState<StoredAuthSession | null | undefined>(
+    isAnonymousImagePath ? anonymousImageSession : undefined,
+  );
 
   useEffect(() => {
     let active = true;
@@ -31,28 +40,18 @@ export function TopNav() {
         return;
       }
 
-      const storedSession = await getStoredAuthSession();
+      const storedSession = await getStoredAuthSession().catch(() => null);
       if (!active) {
         return;
       }
-      setSession(
-        storedSession ||
-          (pathname === "/image"
-            ? {
-                key: "",
-                role: "user",
-                subjectId: "anonymous-user",
-                name: "普通用户",
-              }
-            : null),
-      );
+      setSession(storedSession || (isAnonymousImagePath ? anonymousImageSession : null));
     };
 
     void load();
     return () => {
       active = false;
     };
-  }, [pathname]);
+  }, [isAnonymousImagePath, pathname]);
 
   if (pathname === "/login" || session === undefined || !session) {
     return null;
