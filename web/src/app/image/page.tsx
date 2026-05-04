@@ -841,6 +841,40 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent("image-mode-changed", {
+        detail: referenceImages.length > 0 ? "edit" : "generate",
+      }),
+    );
+  }, [referenceImages.length]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleModeRequest = (event: Event) => {
+      const mode = (event as CustomEvent<"generate" | "edit">).detail;
+      if (mode === "generate") {
+        handleClearReferenceImages();
+        textareaRef.current?.focus();
+        return;
+      }
+      if (mode === "edit") {
+        fileInputRef.current?.click();
+      }
+    };
+
+    window.addEventListener("image-mode-request", handleModeRequest);
+    return () => {
+      window.removeEventListener("image-mode-request", handleModeRequest);
+    };
+  }, [handleClearReferenceImages]);
+
   const handleContinueEdit = useCallback(
     async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
       try {
@@ -1361,7 +1395,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
             onImageSizeChange={setImageSize}
             onReferenceImageChange={handleReferenceImageChange}
-            onClearReferenceImages={handleClearReferenceImages}
             onRemoveReferenceImage={handleRemoveReferenceImage}
             onPolishPrompt={handlePolishPrompt}
             onSubmit={handleSubmit}
