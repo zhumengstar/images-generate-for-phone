@@ -91,23 +91,15 @@ export function useAuthGuard(allowedRoles?: AuthRole[]): UseAuthGuardResult {
 }
 
 export function useRedirectIfAuthenticated() {
-  const router = useRouter();
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   useEffect(() => {
     let active = true;
 
     const load = async () => {
-      const storedSession = await getStoredAuthSession();
       if (!active) {
         return;
       }
-
-      if (storedSession && !storedSession.isGuest) {
-        router.replace(getDefaultRouteForRole(storedSession.role));
-        return;
-      }
-
       setIsCheckingAuth(false);
     };
 
@@ -115,7 +107,7 @@ export function useRedirectIfAuthenticated() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, []);
 
   return { isCheckingAuth };
 }
