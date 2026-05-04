@@ -1,6 +1,6 @@
 "use client";
 import { ArrowUp, Check, ChevronDown, ImagePlus, LoaderCircle, Sparkles, X } from "lucide-react";
-import { useState, type RefObject } from "react";
+import { useState, type CSSProperties, type RefObject } from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,27 @@ type ImageComposerProps = {
   onSubmit: () => void | Promise<void>;
 };
 
+function getAspectPreviewStyle(value: string): CSSProperties {
+  const match = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(value);
+  if (!match) {
+    return { width: 88, height: 88 };
+  }
+
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { width: 88, height: 88 };
+  }
+
+  const maxWidth = 128;
+  const maxHeight = 96;
+  const scale = Math.min(maxWidth / width, maxHeight / height);
+  return {
+    width: Math.max(24, width * scale),
+    height: Math.max(24, height * scale),
+  };
+}
+
 export function ImageComposer({
   prompt,
   imageCount,
@@ -48,6 +69,7 @@ export function ImageComposer({
   onSubmit,
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
+  const [hoveredSizeValue, setHoveredSizeValue] = useState<string | null>(null);
   const imageSizeOptions = [
     { value: "", label: "未指定", description: "" },
     { value: "1:1", label: "1:1 (正方形)", description: "正方形" },
@@ -64,6 +86,9 @@ export function ImageComposer({
   ];
   const selectedSizeOption = imageSizeOptions.find((option) => option.value === imageSize) || imageSizeOptions[0];
   const imageSizeValueLabel = selectedSizeOption.value || selectedSizeOption.label;
+  const previewSizeOption =
+    imageSizeOptions.find((option) => option.value === hoveredSizeValue) || selectedSizeOption;
+  const previewAspectStyle = getAspectPreviewStyle(previewSizeOption.value);
 
   return (
     <div className="relative z-20 flex shrink-0 justify-center border-t border-stone-200/80 bg-stone-50/95 px-2 pt-2 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0">
@@ -183,7 +208,15 @@ export function ImageComposer({
                       className="h-7 w-[40px] border-0 bg-transparent px-0 text-center text-xs font-medium text-stone-700 shadow-none focus-visible:ring-0 sm:h-8 sm:w-[64px] sm:text-sm"
                     />
                   </div>
-                  <PopoverPrimitive.Root open={isSizeMenuOpen} onOpenChange={setIsSizeMenuOpen}>
+                  <PopoverPrimitive.Root
+                    open={isSizeMenuOpen}
+                    onOpenChange={(open) => {
+                      setIsSizeMenuOpen(open);
+                      if (!open) {
+                        setHoveredSizeValue(null);
+                      }
+                    }}
+                  >
                     <div className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]">
                       <span className="font-medium text-stone-700 sm:text-sm">比例</span>
                       <PopoverPrimitive.Trigger asChild>
@@ -207,29 +240,47 @@ export function ImageComposer({
                         align="center"
                         sideOffset={10}
                         collisionPadding={12}
-                        className="z-[100] max-h-[min(48dvh,420px)] w-[min(calc(100vw-2rem),210px)] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
+                        className="z-[100] max-h-[min(48dvh,420px)] w-[min(calc(100vw-2rem),210px)] overflow-y-auto rounded-3xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)] sm:w-[380px] sm:overflow-hidden"
                         onOpenAutoFocus={(event) => event.preventDefault()}
                       >
-                        {imageSizeOptions.map((option) => {
-                          const active = option.value === imageSize;
-                          return (
-                            <button
-                              key={option.label}
-                              type="button"
-                              className={cn(
-                                "flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left text-sm text-stone-700 transition hover:bg-stone-100",
-                                active && "bg-stone-100 font-medium text-stone-950",
-                              )}
-                              onClick={() => {
-                                onImageSizeChange(option.value);
-                                setIsSizeMenuOpen(false);
-                              }}
-                            >
-                              <span className="min-w-0 truncate pr-2">{option.label}</span>
-                              {active ? <Check className="size-4" /> : null}
-                            </button>
-                          );
-                        })}
+                        <div className="sm:grid sm:grid-cols-[178px_minmax(0,1fr)] sm:gap-2">
+                          <div className="max-h-[min(48dvh,404px)] overflow-y-auto pr-0 sm:pr-1">
+                            {imageSizeOptions.map((option) => {
+                              const active = option.value === imageSize;
+                              return (
+                                <button
+                                  key={option.label}
+                                  type="button"
+                                  className={cn(
+                                    "flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left text-sm text-stone-700 transition hover:bg-stone-100",
+                                    active && "bg-stone-100 font-medium text-stone-950",
+                                  )}
+                                  onMouseEnter={() => setHoveredSizeValue(option.value)}
+                                  onFocus={() => setHoveredSizeValue(option.value)}
+                                  onClick={() => {
+                                    onImageSizeChange(option.value);
+                                    setIsSizeMenuOpen(false);
+                                    setHoveredSizeValue(null);
+                                  }}
+                                >
+                                  <span className="min-w-0 truncate pr-2">{option.label}</span>
+                                  {active ? <Check className="size-4" /> : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="hidden rounded-2xl bg-stone-50 p-3 sm:flex sm:min-h-[178px] sm:flex-col sm:items-center sm:justify-center">
+                            <div className="mb-3 text-center text-xs font-medium text-stone-500">
+                              {previewSizeOption.label}
+                            </div>
+                            <div className="flex h-28 w-full items-center justify-center rounded-xl border border-stone-200 bg-white p-3 shadow-inner">
+                              <div
+                                className="max-h-full max-w-full rounded-md border border-stone-300 bg-[linear-gradient(135deg,rgba(214,211,209,0.55)_25%,transparent_25%),linear-gradient(225deg,rgba(214,211,209,0.55)_25%,transparent_25%),linear-gradient(45deg,rgba(214,211,209,0.55)_25%,transparent_25%),linear-gradient(315deg,rgba(214,211,209,0.55)_25%,#fff_25%)] bg-[length:16px_16px] bg-[position:8px_0,8px_0,0_0,0_0] shadow-sm"
+                                style={previewAspectStyle}
+                              />
+                            </div>
+                          </div>
+                        </div>
                       </PopoverPrimitive.Content>
                     </PopoverPrimitive.Portal>
                   </PopoverPrimitive.Root>
