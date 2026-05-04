@@ -125,10 +125,11 @@ export function TopNav() {
               type="button"
               className={cn(
                 "h-8 rounded-full px-2.5 text-[12px] font-extrabold transition sm:px-4 sm:text-sm",
-                imageMode === "edit" ? "bg-stone-950 text-white shadow-sm" : "text-stone-500 hover:bg-white",
+                imageMode === "edit" ? "bg-stone-950 text-white shadow-sm" : "cursor-default text-stone-500",
               )}
-              onClick={() => requestImageMode("edit")}
+              onClick={(event) => event.preventDefault()}
               aria-pressed={imageMode === "edit"}
+              tabIndex={-1}
             >
               图片编辑
             </button>
