@@ -844,8 +844,6 @@ export function ImageComposer({
                                       const normalized = normalizeCustomAspectRatio(event.target.value);
                                       setHoveredSizeValue(normalized || null);
                                     }}
-                                    onClick={(event) => event.stopPropagation()}
-                                    onPointerDown={(event) => event.stopPropagation()}
                                     placeholder="7:5"
                                     className="h-10 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
                                   />
