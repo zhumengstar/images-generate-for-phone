@@ -1346,6 +1346,7 @@ function ImagePageContent() {
             id: imageId,
             taskId: returnedTaskId,
             status: "loading",
+            completedAt: undefined,
           });
         };
         const generatedImages = await Promise.all(
@@ -1389,6 +1390,7 @@ function ImagePageContent() {
                   taskId: returnedTaskId,
                   status: "loading" as const,
                   error: undefined,
+                  completedAt: undefined,
                 };
               }
               if (task.status === "error") {
@@ -1416,6 +1418,7 @@ function ImagePageContent() {
                 url: undefined,
                 revised_prompt: first.revised_prompt,
                 error: undefined,
+                completedAt: new Date().toISOString(),
               };
               await updateGeneratedImage(generatedImage);
               return generatedImage;
@@ -1449,6 +1452,7 @@ function ImagePageContent() {
                   url: undefined,
                   revised_prompt: recoveredImage.revised_prompt,
                   error: undefined,
+                  completedAt: new Date().toISOString(),
                 };
                 await updateGeneratedImage(generatedImage);
                 return generatedImage;
@@ -1459,6 +1463,7 @@ function ImagePageContent() {
                   taskId: effectiveTaskId,
                   status: "loading" as const,
                   error: undefined,
+                  completedAt: undefined,
                 };
                 await updateGeneratedImage(pendingImage);
                 return pendingImage;
@@ -1470,6 +1475,7 @@ function ImagePageContent() {
                   taskId: effectiveTaskId,
                   status: "loading" as const,
                   error: undefined,
+                  completedAt: undefined,
                 };
                 await updateGeneratedImage(pendingImage);
                 return pendingImage;
@@ -1479,6 +1485,7 @@ function ImagePageContent() {
                 taskId: effectiveTaskId,
                 status: "error" as const,
                 error: message,
+                completedAt: new Date().toISOString(),
               };
               await updateGeneratedImage(generatedImage);
               return generatedImage;
@@ -1577,17 +1584,19 @@ function ImagePageContent() {
                   images: item.images.map((image) => {
                     const createdTaskId = createdTaskMap.get(image.id);
                     return createdTaskId
-                      ? {
-                          ...image,
-                          taskId: createdTaskId,
-                          status: "loading",
-                          error: undefined,
-                        }
-                      : {
-                          ...image,
-                          status: "error",
-                          error: failedMessages[0] || "创建图片任务失败",
-                        };
+                        ? {
+                            ...image,
+                            taskId: createdTaskId,
+                            status: "loading",
+                            error: undefined,
+                            completedAt: undefined,
+                          }
+                        : {
+                            ...image,
+                            status: "error",
+                            error: failedMessages[0] || "创建图片任务失败",
+                            completedAt: new Date().toISOString(),
+                          };
                   }),
                 }
               : item,

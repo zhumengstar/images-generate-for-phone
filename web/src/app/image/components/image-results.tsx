@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, type CSSProperties } from "react";
+import { memo, useEffect, useState, type CSSProperties } from "react";
 import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -100,6 +100,7 @@ function ImageResultsComponent({
 }: ImageResultsProps) {
   const [imageDimensions, setImageDimensions] = useState<Record<string, string>>({});
   const [expandedPromptIds, setExpandedPromptIds] = useState<Record<string, boolean>>({});
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const togglePromptExpanded = (id: string) => {
     setExpandedPromptIds((current) => ({ ...current, [id]: !current[id] }));
@@ -114,6 +115,18 @@ function ImageResultsComponent({
       return { ...current, [id]: dimensions };
     });
   };
+
+  const hasRunningImages = Boolean(
+    selectedConversation?.turns.some((turn) => turn.images.some((image) => image.status === "loading")),
+  );
+
+  useEffect(() => {
+    if (!hasRunningImages) {
+      return;
+    }
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasRunningImages]);
 
   if (!selectedConversation) {
     return (
@@ -233,6 +246,7 @@ function ImageResultsComponent({
                       const sizeLabel = image.b64_json ? formatBase64ImageSize(image.b64_json) : "";
                       const dimensions = imageDimensions[image.id];
                       const imageMeta = [sizeLabel, dimensions].filter(Boolean).join(" · ");
+                      const elapsedLabel = formatElapsedTime(turn.createdAt, image.completedAt);
 
                       return (
                         <div
@@ -263,6 +277,11 @@ function ImageResultsComponent({
                               <div className="text-sm font-medium text-stone-800 sm:inline-flex sm:h-7 sm:items-center sm:rounded-full sm:bg-white/80 sm:px-2.5 sm:text-xs sm:font-medium sm:text-stone-700 sm:ring-1 sm:ring-stone-200/80">
                                 结果 {index + 1}
                               </div>
+                              {elapsedLabel ? (
+                                <div className="mt-1 inline-flex h-6 items-center rounded-full bg-stone-950 px-2 text-[11px] font-medium text-white sm:hidden">
+                                  耗时 {elapsedLabel}
+                                </div>
+                              ) : null}
                               <button
                                 type="button"
                                 className={cn(
@@ -328,6 +347,9 @@ function ImageResultsComponent({
                           </div>
                         </div>
                         <div className="flex min-h-28 flex-1 flex-col justify-center px-4 py-3 text-left text-stone-500 sm:h-full sm:items-center sm:px-6 sm:py-8 sm:text-center">
+                          <div className="mb-2 inline-flex w-fit items-center rounded-full bg-stone-950 px-2.5 py-1 text-[11px] font-medium text-white sm:hidden">
+                            {turn.status === "queued" ? "等待" : "生成中"} {formatElapsedTime(turn.createdAt, nowTick)}
+                          </div>
                           <p className="max-w-full px-1 text-xs leading-5 sm:text-sm">
                             {turn.status === "queued" ? "已加入当前对话队列..." : "正在后台处理图片，刷新不会中断..."}
                           </p>
@@ -382,4 +404,19 @@ function formatBase64ImageSize(base64: string) {
 
 function formatImageDimensions(width: number, height: number) {
   return `${width} x ${height}`;
+}
+
+function formatElapsedTime(startValue: string, endValue: string | number | undefined) {
+  const start = new Date(startValue).getTime();
+  const end = typeof endValue === "number" ? endValue : endValue ? new Date(endValue).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return "0秒";
+  }
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) {
+    return `${seconds}秒`;
+  }
+  return `${minutes}分${seconds.toString().padStart(2, "0")}秒`;
 }
