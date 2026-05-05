@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict
@@ -15,8 +13,6 @@ from services.proxy_service import test_proxy
 from services.web_user_service import web_user_service
 
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
-GUEST_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT", "5"))
-USER_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT", os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20")))
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -36,6 +32,30 @@ class ImageDeleteRequest(BaseModel):
 
 class WebUserQuotaUpdateRequest(BaseModel):
     quota_limit: int
+
+
+class WebUserDefaultQuotaUpdateRequest(BaseModel):
+    user_image_quota_limit: int
+    guest_image_quota_limit: int
+
+
+def _default_quota_limits() -> dict[str, int]:
+    return {
+        "user_image_quota_limit": config.user_image_quota_limit,
+        "guest_image_quota_limit": config.guest_image_quota_limit,
+    }
+
+
+def _web_users_payload() -> dict[str, object]:
+    limits = _default_quota_limits()
+    return {
+        "items": web_user_service.list_users(
+            _load_ip_quotas(),
+            limits["user_image_quota_limit"],
+            limits["guest_image_quota_limit"],
+        ),
+        "default_quota_limits": limits,
+    }
 
 
 def _load_ip_quotas() -> dict[str, int]:
@@ -78,8 +98,7 @@ def _migrate_guest_quota_to_user(user_id: str, device_fingerprint: str) -> int:
     return migrated
 
 
-def _reset_quota_usage_for_web_user(user_id: str) -> int:
-    target = web_user_service.quota_usage_target(user_id)
+def _reset_quota_usage_for_target(target: dict[str, str]) -> int:
     items = _load_ip_quotas()
     removed = 0
     if target["role"] == "user":
@@ -99,6 +118,10 @@ def _reset_quota_usage_for_web_user(user_id: str) -> int:
     if removed:
         _save_ip_quotas(items)
     return removed
+
+
+def _reset_quota_usage_for_web_user(user_id: str) -> int:
+    return _reset_quota_usage_for_target(web_user_service.quota_usage_target(user_id))
 
 
 def create_router(app_version: str) -> APIRouter:
@@ -195,16 +218,37 @@ def create_router(app_version: str) -> APIRouter:
     @router.get("/api/web-users")
     async def list_web_users(authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return {"items": web_user_service.list_users(_load_ip_quotas(), USER_IMAGE_QUOTA_LIMIT, GUEST_IMAGE_QUOTA_LIMIT)}
+        return _web_users_payload()
 
     @router.post("/api/web-users/{user_id}/quota")
     async def update_web_user_quota(user_id: str, body: WebUserQuotaUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
         try:
-            web_user_service.update_quota_limit(user_id, body.quota_limit, USER_IMAGE_QUOTA_LIMIT)
+            web_user_service.update_quota_limit(user_id, body.quota_limit, config.user_image_quota_limit)
             _reset_quota_usage_for_web_user(user_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
-        return {"items": web_user_service.list_users(_load_ip_quotas(), USER_IMAGE_QUOTA_LIMIT, GUEST_IMAGE_QUOTA_LIMIT)}
+        return _web_users_payload()
+
+    @router.delete("/api/web-users/{user_id}")
+    async def delete_web_user(user_id: str, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            target = web_user_service.delete_user(user_id)
+            _reset_quota_usage_for_target(target)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return _web_users_payload()
+
+    @router.post("/api/web-users/default-quotas")
+    async def update_web_user_default_quotas(body: WebUserDefaultQuotaUpdateRequest, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        config.update(
+            {
+                "user_image_quota_limit": max(0, int(body.user_image_quota_limit)),
+                "guest_image_quota_limit": max(0, int(body.guest_image_quota_limit)),
+            }
+        )
+        return _web_users_payload()
 
     return router

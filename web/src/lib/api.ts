@@ -179,6 +179,16 @@ export type WebUser = {
   }>;
 };
 
+export type WebUserDefaultQuotaLimits = {
+  user_image_quota_limit: number;
+  guest_image_quota_limit: number;
+};
+
+export type WebUsersResponse = {
+  items: WebUser[];
+  default_quota_limits: WebUserDefaultQuotaLimits;
+};
+
 export type RegisterConfig = {
   enabled: boolean;
   mail: {
@@ -666,13 +676,26 @@ export async function fetchUserKeys() {
 }
 
 export async function fetchWebUsers() {
-  return httpRequest<{ items: WebUser[] }>("/api/web-users");
+  return httpRequest<WebUsersResponse>("/api/web-users");
 }
 
 export async function updateWebUserQuota(userId: string, quotaLimit: number) {
-  return httpRequest<{ items: WebUser[] }>(`/api/web-users/${encodeURIComponent(userId)}/quota`, {
+  return httpRequest<WebUsersResponse>(`/api/web-users/${encodeURIComponent(userId)}/quota`, {
     method: "POST",
     body: { quota_limit: quotaLimit },
+  });
+}
+
+export async function updateWebUserDefaultQuotas(limits: WebUserDefaultQuotaLimits) {
+  return httpRequest<WebUsersResponse>("/api/web-users/default-quotas", {
+    method: "POST",
+    body: limits,
+  });
+}
+
+export async function deleteWebUser(userId: string) {
+  return httpRequest<WebUsersResponse>(`/api/web-users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
   });
 }
 

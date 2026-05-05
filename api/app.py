@@ -29,8 +29,6 @@ from services.config import DATA_DIR, config
 from services.web_user_service import web_user_service
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-GUEST_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT", "5"))
-USER_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT", os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT", "20")))
 IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "https://generate.muling.store").rstrip("/")
 IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
 IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
@@ -49,6 +47,14 @@ ACTIVE_IP_TASK_LOCK = Lock()
 ACTIVE_IP_TASKS: set[str] = set()
 ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
 MAX_OWNER_QUEUED_IMAGE_TASKS = 4
+
+
+def _guest_image_quota_limit() -> int:
+    return config.guest_image_quota_limit
+
+
+def _user_image_quota_limit() -> int:
+    return config.user_image_quota_limit
 
 IMAGE_PROMPT_SAFETY_NOTICE = (
     "当前提示词包含违法违规或敏感内容，无法生成图片。请修改为合法、健康、非敏感的描述后再提交。"
@@ -137,7 +143,7 @@ def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, obj
                 "user_id": subject_id,
                 "name": identity.get("name") or subject_id,
                 "type": "user",
-                "limit": web_user_service.get_quota_limit(subject_id, USER_IMAGE_QUOTA_LIMIT),
+                "limit": web_user_service.get_quota_limit(subject_id, _user_image_quota_limit()),
                 "ip": ip,
                 "fingerprint": fingerprint,
             }
@@ -150,7 +156,7 @@ def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, obj
         "user_id": identity["id"],
         "name": identity.get("name") or identity["id"],
         "type": "guest",
-        "limit": web_user_service.get_guest_quota_limit(fingerprint, GUEST_IMAGE_QUOTA_LIMIT),
+        "limit": web_user_service.get_guest_quota_limit(fingerprint, _guest_image_quota_limit()),
         "ip": ip,
         "fingerprint": fingerprint,
     }
@@ -215,7 +221,7 @@ def _refund_ip_quota(quota_key: str, count: int, quota_limit: int | None = None)
         return
     if quota_limit is None and quota_key.startswith("user|"):
         user_id = quota_key.split("|", 2)[1] if "|" in quota_key else ""
-        if web_user_service.get_quota_limit(user_id, USER_IMAGE_QUOTA_LIMIT) < 0:
+        if web_user_service.get_quota_limit(user_id, _user_image_quota_limit()) < 0:
             return
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
@@ -272,7 +278,7 @@ def _create_image_share_reward(subject: dict[str, object]) -> dict[str, object]:
 def _award_share_owner_quota(item: dict[str, Any]) -> None:
     owner_type = str(item.get("owner_type") or "")
     owner_user_id = str(item.get("owner_user_id") or "")
-    default_limit = GUEST_IMAGE_QUOTA_LIMIT if owner_type == "guest" else USER_IMAGE_QUOTA_LIMIT
+    default_limit = _guest_image_quota_limit() if owner_type == "guest" else _user_image_quota_limit()
     web_user_service.increment_quota_limit(owner_user_id, 1, default_limit)
 
 
@@ -691,7 +697,7 @@ def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
             ip=str(task.get("ip") or "").strip(),
             fingerprint=str(task.get("fingerprint") or "").strip(),
             quota_key=str(task.get("quota_key") or task.get("owner") or "").strip(),
-            quota_limit=int(task.get("quota_limit") or USER_IMAGE_QUOTA_LIMIT),
+            quota_limit=int(task.get("quota_limit") or _user_image_quota_limit()),
             count=max(1, int(work.get("count") or 1)),
             mode=str(task.get("mode") or "generate"),
             payload=work.get("payload") if isinstance(work.get("payload"), dict) else None,

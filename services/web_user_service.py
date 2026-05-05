@@ -415,6 +415,30 @@ class WebUserService:
                 return self._public_item(next_item)
         raise ValueError("用户不存在")
 
+    def delete_user(self, user_id: str) -> dict[str, str]:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            raise ValueError("用户不存在")
+        with self._lock:
+            for index, item in enumerate(self._items):
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                role = str(public.get("role") or "")
+                if role == "admin":
+                    raise ValueError("管理员账号不能删除")
+                if role not in {"user", "guest"}:
+                    raise ValueError("只能删除用户或访客")
+                target = {
+                    "role": role,
+                    "id": normalized_id,
+                    "device_fingerprint": _clean(item.get("device_fingerprint")),
+                }
+                self._items.pop(index)
+                self._save()
+                return target
+        raise ValueError("用户不存在")
+
     def quota_usage_target(self, user_id: str) -> dict[str, str]:
         normalized_id = _clean(user_id)
         if not normalized_id:

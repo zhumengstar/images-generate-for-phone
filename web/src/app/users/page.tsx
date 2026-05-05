@@ -1,13 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Infinity, LoaderCircle, RefreshCw, Save, Search, ShieldCheck, UserRound, X } from "lucide-react";
+import { Infinity, LoaderCircle, RefreshCw, Save, Search, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { fetchWebUsers, updateWebUserQuota, type WebUser } from "@/lib/api";
+import {
+  deleteWebUser,
+  fetchWebUsers,
+  updateWebUserDefaultQuotas,
+  updateWebUserQuota,
+  type WebUser,
+  type WebUsersResponse,
+} from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 
@@ -60,22 +67,40 @@ export default function UsersPage() {
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [bulkQuotaDraft, setBulkQuotaDraft] = useState("");
   const [isBulkSaving, setIsBulkSaving] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [quotaDrafts, setQuotaDrafts] = useState<Record<string, string>>({});
   const [savingQuotaIds, setSavingQuotaIds] = useState<Record<string, boolean>>({});
+  const [deletingUserIds, setDeletingUserIds] = useState<Record<string, boolean>>({});
+  const [defaultQuotaDrafts, setDefaultQuotaDrafts] = useState({
+    user_image_quota_limit: "20",
+    guest_image_quota_limit: "5",
+  });
+  const [isSavingDefaultQuotas, setIsSavingDefaultQuotas] = useState(false);
+
+  const applyWebUsersData = useCallback((data: WebUsersResponse) => {
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!Array.isArray(data.items)) {
+      toast.error("读取用户失败，请重新登录后再试");
+    }
+    setUsers(items);
+    setQuotaDrafts(
+      Object.fromEntries(items.map((user) => [user.id, user.quota_limit < 0 ? "" : String(user.quota_limit)])),
+    );
+    const limits = data.default_quota_limits;
+    if (limits) {
+      setDefaultQuotaDrafts({
+        user_image_quota_limit: String(Math.max(0, Number(limits.user_image_quota_limit) || 0)),
+        guest_image_quota_limit: String(Math.max(0, Number(limits.guest_image_quota_limit) || 0)),
+      });
+    }
+  }, []);
 
   const loadUsers = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await fetchWebUsers();
-      const items = Array.isArray(data.items) ? data.items : [];
-      if (!Array.isArray(data.items)) {
-        toast.error("读取用户失败，请重新登录后再试");
-      }
-      setUsers(items);
-      setQuotaDrafts(
-        Object.fromEntries(items.map((user) => [user.id, user.quota_limit < 0 ? "" : String(user.quota_limit)])),
-      );
+      applyWebUsersData(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : "读取用户失败";
       setUsers([]);
@@ -84,17 +109,13 @@ export default function UsersPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [applyWebUsersData]);
 
   const saveUserQuota = useCallback(async (user: WebUser, quotaLimit: number) => {
     setSavingQuotaIds((current) => ({ ...current, [user.id]: true }));
     try {
       const data = await updateWebUserQuota(user.id, quotaLimit);
-      const items = Array.isArray(data.items) ? data.items : [];
-      setUsers(items);
-      setQuotaDrafts(
-        Object.fromEntries(items.map((item) => [item.id, item.quota_limit < 0 ? "" : String(item.quota_limit)])),
-      );
+      applyWebUsersData(data);
       toast.success(quotaLimit < 0 ? "已设置为无限额度" : "图片额度已保存");
     } catch (error) {
       const message = error instanceof Error ? error.message : "保存图片额度失败";
@@ -102,7 +123,29 @@ export default function UsersPage() {
     } finally {
       setSavingQuotaIds((current) => ({ ...current, [user.id]: false }));
     }
-  }, []);
+  }, [applyWebUsersData]);
+
+  const saveDefaultQuotas = useCallback(async () => {
+    const userLimit = defaultQuotaDrafts.user_image_quota_limit.trim();
+    const guestLimit = defaultQuotaDrafts.guest_image_quota_limit.trim();
+    if (!/^\d+$/.test(userLimit) || !/^\d+$/.test(guestLimit)) {
+      toast.error("默认额度请输入 0 或更大的整数");
+      return;
+    }
+    setIsSavingDefaultQuotas(true);
+    try {
+      const data = await updateWebUserDefaultQuotas({
+        user_image_quota_limit: Number(userLimit),
+        guest_image_quota_limit: Number(guestLimit),
+      });
+      applyWebUsersData(data);
+      toast.success("默认额度已保存");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存默认额度失败");
+    } finally {
+      setIsSavingDefaultQuotas(false);
+    }
+  }, [applyWebUsersData, defaultQuotaDrafts]);
 
   const saveFiniteQuota = useCallback(
     async (user: WebUser) => {
@@ -119,6 +162,27 @@ export default function UsersPage() {
   const clearSelectedUsers = useCallback(() => {
     setSelectedUserIds([]);
   }, []);
+
+  const deleteUser = useCallback(async (user: WebUser) => {
+    if (user.role === "admin" || deletingUserIds[user.id] || isBulkDeleting) {
+      return;
+    }
+    const displayName = user.username || user.name || user.id;
+    if (!window.confirm(`确认删除用户「${displayName}」？删除后会清空该用户的额度记录。`)) {
+      return;
+    }
+    setDeletingUserIds((current) => ({ ...current, [user.id]: true }));
+    try {
+      const data = await deleteWebUser(user.id);
+      applyWebUsersData(data);
+      setSelectedUserIds((current) => current.filter((id) => id !== user.id));
+      toast.success("用户已删除");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除用户失败");
+    } finally {
+      setDeletingUserIds((current) => ({ ...current, [user.id]: false }));
+    }
+  }, [applyWebUsersData, deletingUserIds, isBulkDeleting]);
 
   useEffect(() => {
     if (isCheckingAuth || !session || session.role !== "admin") {
@@ -206,9 +270,45 @@ export default function UsersPage() {
     });
   };
 
+  const deleteSelectedUsers = useCallback(async () => {
+    if (selectedUsers.length === 0 || isBulkSaving || isBulkDeleting) {
+      return;
+    }
+    if (!window.confirm(`确认删除已选的 ${selectedUsers.length} 个用户？删除后会清空这些用户的额度记录。`)) {
+      return;
+    }
+    setIsBulkDeleting(true);
+    setDeletingUserIds((current) => ({
+      ...current,
+      ...Object.fromEntries(selectedUsers.map((user) => [user.id, true])),
+    }));
+    try {
+      let latestData: WebUsersResponse | null = null;
+      for (const user of selectedUsers) {
+        latestData = await deleteWebUser(user.id);
+      }
+      if (latestData) {
+        applyWebUsersData(latestData);
+      } else {
+        await loadUsers();
+      }
+      setSelectedUserIds([]);
+      toast.success(`已批量删除 ${selectedUsers.length} 个用户`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "批量删除失败");
+      await loadUsers();
+    } finally {
+      setDeletingUserIds((current) => ({
+        ...current,
+        ...Object.fromEntries(selectedUsers.map((user) => [user.id, false])),
+      }));
+      setIsBulkDeleting(false);
+    }
+  }, [applyWebUsersData, isBulkDeleting, isBulkSaving, loadUsers, selectedUsers]);
+
   const saveBulkQuota = useCallback(
     async (quotaLimit: number) => {
-      if (selectedUsers.length === 0 || isBulkSaving) {
+      if (selectedUsers.length === 0 || isBulkSaving || isBulkDeleting) {
         return;
       }
       setIsBulkSaving(true);
@@ -217,19 +317,17 @@ export default function UsersPage() {
         ...Object.fromEntries(selectedUsers.map((user) => [user.id, true])),
       }));
       try {
-        let latestItems: WebUser[] | null = null;
+        let latestData: WebUsersResponse | null = null;
         for (const user of selectedUsers) {
           const data = await updateWebUserQuota(user.id, quotaLimit);
-          latestItems = Array.isArray(data.items) ? data.items : latestItems;
+          latestData = data;
         }
-        if (latestItems) {
-          setUsers(latestItems);
-          setQuotaDrafts(
-            Object.fromEntries(latestItems.map((item) => [item.id, item.quota_limit < 0 ? "" : String(item.quota_limit)])),
-          );
+        if (latestData) {
+          applyWebUsersData(latestData);
         } else {
           await loadUsers();
         }
+        setSelectedUserIds([]);
         toast.success(`已批量更新 ${selectedUsers.length} 个用户`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "批量更新失败";
@@ -243,7 +341,7 @@ export default function UsersPage() {
         setIsBulkSaving(false);
       }
     },
-    [isBulkSaving, loadUsers, selectedUsers],
+    [applyWebUsersData, isBulkDeleting, isBulkSaving, loadUsers, selectedUsers],
   );
 
   const saveBulkFiniteQuota = useCallback(async () => {
@@ -263,6 +361,7 @@ export default function UsersPage() {
 
   const hasFilters = Boolean(searchText.trim()) || roleFilter !== "all" || quotaFilter !== "all";
   const hasSelectedUsers = selectedUsers.length > 0;
+  const isBulkBusy = isBulkSaving || isBulkDeleting;
 
   if (isCheckingAuth || !session) {
     return (
@@ -274,21 +373,35 @@ export default function UsersPage() {
 
   return (
     <main
-      className="flex min-h-0 shrink-0 overflow-hidden bg-stone-50 px-3 py-4 sm:px-6 sm:py-5 lg:-mx-8 lg:px-4 xl:px-5"
+      className="flex min-h-0 shrink-0 overflow-hidden bg-stone-50 px-3 py-2 sm:px-6 sm:py-2 lg:-mx-8 lg:px-4 xl:px-5"
       style={{
         height: viewportHeight ? `${Math.max(520, viewportHeight - 104)}px` : "796px",
         maxHeight: viewportHeight ? `${Math.max(520, viewportHeight - 104)}px` : "796px",
         minHeight: 0,
       }}
     >
-      <div className="mx-auto flex min-h-0 w-full max-w-none flex-col gap-4">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-          <div>
+      <div className="mx-auto flex min-h-0 w-full max-w-none flex-col gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight text-stone-950">用户管理</h1>
+            {[
+              ["用户", stats.total],
+              ["管理员", stats.admins],
+              ["设备", stats.active],
+              ["用图", stats.used],
+            ].map(([label, value]) => (
+              <span
+                key={label}
+                className="inline-flex h-8 items-center gap-1 rounded-full border border-stone-200 bg-white px-3 text-xs font-medium text-stone-500 shadow-sm"
+              >
+                {label}
+                <span className="text-sm font-semibold text-stone-950">{value}</span>
+              </span>
+            ))}
           </div>
           <Button
             variant="outline"
-            className="h-10 rounded-xl border-stone-200 bg-white"
+            className="h-9 rounded-xl border-stone-200 bg-white px-3"
             onClick={() => void loadUsers()}
             disabled={isLoading}
           >
@@ -297,7 +410,50 @@ export default function UsersPage() {
           </Button>
         </div>
 
-        <div className="grid shrink-0 gap-3 sm:grid-cols-4">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-2 shadow-sm">
+          <span className="whitespace-nowrap text-sm font-semibold text-stone-800">默认额度</span>
+          <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
+            用户
+            <Input
+              className="h-8 w-24 rounded-xl border-stone-200 bg-white text-sm"
+              inputMode="numeric"
+              min={0}
+              type="number"
+              value={defaultQuotaDrafts.user_image_quota_limit}
+              disabled={isSavingDefaultQuotas}
+              onChange={(event) =>
+                setDefaultQuotaDrafts((current) => ({ ...current, user_image_quota_limit: event.target.value }))
+              }
+            />
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
+            访客
+            <Input
+              className="h-8 w-24 rounded-xl border-stone-200 bg-white text-sm"
+              inputMode="numeric"
+              min={0}
+              type="number"
+              value={defaultQuotaDrafts.guest_image_quota_limit}
+              disabled={isSavingDefaultQuotas}
+              onChange={(event) =>
+                setDefaultQuotaDrafts((current) => ({ ...current, guest_image_quota_limit: event.target.value }))
+              }
+            />
+          </label>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 whitespace-nowrap rounded-xl border-stone-200 bg-white px-3"
+            disabled={isSavingDefaultQuotas}
+            onClick={() => void saveDefaultQuotas()}
+          >
+            {isSavingDefaultQuotas ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+            保存默认
+          </Button>
+          <span className="whitespace-nowrap text-xs text-stone-400">仅影响未单独设置额度的用户</span>
+        </div>
+
+        <div className="hidden shrink-0 gap-3 sm:grid-cols-4">
           {[
             ["用户总数", stats.total],
             ["管理员", stats.admins],
@@ -315,12 +471,12 @@ export default function UsersPage() {
 
         <Card className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border-stone-200/80 bg-white shadow-sm">
           <CardContent className="flex min-h-0 w-full flex-1 flex-col p-0">
-            <div className="shrink-0 border-b border-stone-100 bg-white p-3 sm:p-4">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="shrink-0 border-b border-stone-100 bg-white p-2 sm:p-3">
+              <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                 <div className="relative w-full xl:max-w-[380px]">
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
                   <Input
-                    className="h-10 rounded-xl border-stone-200 bg-white pl-10 pr-10 text-sm"
+                    className="h-9 rounded-xl border-stone-200 bg-white pl-10 pr-10 text-sm"
                     value={searchText}
                     onChange={(event) => setSearchText(event.target.value)}
                     placeholder="搜索用户名、角色或 ID"
@@ -336,7 +492,7 @@ export default function UsersPage() {
                     </button>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {[
                     ["all", "全部角色"],
                     ["admin", "管理员"],
@@ -347,7 +503,7 @@ export default function UsersPage() {
                       key={value}
                       type="button"
                       className={cn(
-                        "h-9 rounded-xl border px-3 text-sm font-medium transition",
+                        "h-8 rounded-xl border px-3 text-sm font-medium transition",
                         roleFilter === value
                           ? "border-stone-950 bg-stone-950 text-white"
                           : "border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-950",
@@ -367,7 +523,7 @@ export default function UsersPage() {
                       key={value}
                       type="button"
                       className={cn(
-                        "h-9 rounded-xl border px-3 text-sm font-medium transition",
+                        "h-8 rounded-xl border px-3 text-sm font-medium transition",
                         quotaFilter === value
                           ? "border-stone-950 bg-stone-950 text-white"
                           : "border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-950",
@@ -381,7 +537,7 @@ export default function UsersPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-9 rounded-xl px-3 text-stone-600"
+                      className="h-8 rounded-xl px-3 text-stone-600"
                       onClick={resetFilters}
                     >
                       <X className="size-4" />
@@ -390,8 +546,63 @@ export default function UsersPage() {
                   ) : null}
                 </div>
               </div>
-              <div className="mt-3 text-xs font-medium text-stone-500">
+              <div className="mt-2 text-xs font-medium text-stone-500">
                 显示 {filteredUsers.length} / {users.length} 个用户
+              </div>
+              <div className={cn("mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-stone-100 bg-stone-50/80 p-1.5", !hasSelectedUsers && "hidden")}>
+                <span className="px-2 text-xs font-semibold text-stone-500">已选 {selectedUsers.length} 个</span>
+                <Input
+                  className="h-8 w-28 rounded-xl border-stone-200 bg-white text-sm"
+                  inputMode="numeric"
+                  min={0}
+                  type="number"
+                  value={bulkQuotaDraft}
+                  placeholder="批量额度"
+                  disabled={!hasSelectedUsers || isBulkBusy}
+                  onChange={(event) => setBulkQuotaDraft(event.target.value)}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-xl border-stone-200 bg-white px-3"
+                  disabled={!hasSelectedUsers || isBulkBusy}
+                  onClick={() => void saveBulkFiniteQuota()}
+                >
+                  {isBulkSaving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+                  批量保存
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 rounded-xl px-3 text-stone-600"
+                  disabled={!hasSelectedUsers || isBulkBusy}
+                  onClick={() => void saveBulkQuota(-1)}
+                >
+                  <Infinity className="size-4" />
+                  批量无限
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 rounded-xl px-3 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  disabled={!hasSelectedUsers || isBulkBusy}
+                  onClick={() => void deleteSelectedUsers()}
+                >
+                  {isBulkDeleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                  批量删除
+                </Button>
+                {hasSelectedUsers ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 rounded-xl px-3 text-stone-600"
+                    disabled={isBulkBusy}
+                    onClick={clearSelectedUsers}
+                  >
+                    <X className="size-4" />
+                    清空选择
+                  </Button>
+                ) : null}
               </div>
             </div>
             {isLoading ? (
@@ -400,9 +611,19 @@ export default function UsersPage() {
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-auto">
-                <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
+                <table className="w-full min-w-[1320px] border-collapse text-left text-sm">
                   <thead className="sticky top-0 z-10 border-b border-stone-100 bg-stone-50 text-xs font-semibold text-stone-500">
                     <tr>
+                      <th className="w-12 whitespace-nowrap px-5 py-3">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border-stone-300 accent-stone-950"
+                          checked={allVisibleSelected}
+                          disabled={selectableFilteredUsers.length === 0 || isBulkBusy}
+                          onChange={toggleVisibleSelected}
+                          aria-label="全选当前筛选用户"
+                        />
+                      </th>
                       <th className="whitespace-nowrap px-5 py-3">用户</th>
                       <th className="whitespace-nowrap px-5 py-3">角色</th>
                       <th className="whitespace-nowrap px-5 py-3">会话</th>
@@ -410,11 +631,22 @@ export default function UsersPage() {
                       <th className="whitespace-nowrap px-5 py-3">图片额度</th>
                       <th className="whitespace-nowrap px-5 py-3">最后登录</th>
                       <th className="whitespace-nowrap px-5 py-3">创建时间</th>
+                      <th className="whitespace-nowrap px-5 py-3 text-right">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
                     {filteredUsers.map((user) => (
-                      <tr key={user.id} className="align-top">
+                      <tr key={user.id} className={cn("align-top", selectedUserIds.includes(user.id) && "bg-stone-50")}>
+                        <td className="px-5 py-3">
+                          <input
+                            type="checkbox"
+                            className="size-4 rounded border-stone-300 accent-stone-950"
+                            checked={selectedUserIds.includes(user.id)}
+                            disabled={user.role === "admin" || isBulkBusy}
+                            onChange={() => toggleUserSelected(user)}
+                            aria-label={`选择 ${user.username || user.name}`}
+                          />
+                        </td>
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2">
                             <div className="inline-flex size-8 items-center justify-center rounded-full bg-stone-100 text-stone-500">
@@ -492,6 +724,27 @@ export default function UsersPage() {
                         </td>
                         <td className="whitespace-nowrap px-5 py-3 text-stone-600">{formatTime(user.last_used_at)}</td>
                         <td className="whitespace-nowrap px-5 py-3 text-stone-600">{formatTime(user.created_at)}</td>
+                        <td className="whitespace-nowrap px-5 py-3 text-right">
+                          {user.role === "admin" ? (
+                            <span className="text-xs font-medium text-stone-300">--</span>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 whitespace-nowrap rounded-xl px-3 text-red-600 hover:bg-red-50 hover:text-red-700"
+                              disabled={Boolean(deletingUserIds[user.id]) || isBulkBusy}
+                              onClick={() => void deleteUser(user)}
+                              aria-label={`删除 ${user.username || user.name || user.id}`}
+                            >
+                              {deletingUserIds[user.id] ? (
+                                <LoaderCircle className="size-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-4" />
+                              )}
+                              删除
+                            </Button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

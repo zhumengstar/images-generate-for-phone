@@ -66,6 +66,13 @@ def _load_settings() -> LoadedSettings:
     )
 
 
+def _non_negative_int(value: object, fallback: int) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = path
@@ -109,6 +116,22 @@ class ConfigStore:
             return max(1, int(self.data.get("image_retention_days", 30)))
         except (TypeError, ValueError):
             return 30
+
+    @property
+    def guest_image_quota_limit(self) -> int:
+        return _non_negative_int(
+            os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT") or self.data.get("guest_image_quota_limit"),
+            5,
+        )
+
+    @property
+    def user_image_quota_limit(self) -> int:
+        return _non_negative_int(
+            os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT")
+            or os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT")
+            or self.data.get("user_image_quota_limit"),
+            20,
+        )
 
     @property
     def auto_remove_invalid_accounts(self) -> bool:
@@ -172,6 +195,8 @@ class ConfigStore:
         data = dict(self.data)
         data["refresh_account_interval_minute"] = self.refresh_account_interval_minute
         data["image_retention_days"] = self.image_retention_days
+        data["guest_image_quota_limit"] = self.guest_image_quota_limit
+        data["user_image_quota_limit"] = self.user_image_quota_limit
         data["auto_remove_invalid_accounts"] = self.auto_remove_invalid_accounts
         data["auto_remove_rate_limited_accounts"] = self.auto_remove_rate_limited_accounts
         data["log_levels"] = self.log_levels
