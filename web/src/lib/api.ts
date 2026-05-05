@@ -104,6 +104,18 @@ export type IpQuotaResponse = {
   remaining: number;
 };
 
+export type ImageShareLinkResponse = {
+  code: string;
+  created_at?: string;
+  share_path: string;
+};
+
+export type ImageShareRedeemResponse = {
+  awarded: boolean;
+  message: string;
+  ip_quota?: IpQuotaResponse;
+};
+
 export type ImageTask = {
   id: string;
   status: "queued" | "running" | "success" | "error";
@@ -394,6 +406,58 @@ export async function refundIpQuota(count = 1) {
     throw new Error(`退回 IP 额度失败 (${response.status})`);
   }
   return (await response.json()) as IpQuotaResponse;
+}
+
+export async function createImageShareLink() {
+  const authKey = await getStoredAuthKey();
+  const response = await fetch("/api/ip-limited/share-link", {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": await getDeviceFingerprint(),
+    },
+    body: JSON.stringify({}),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
+      `创建分享链接失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as ImageShareLinkResponse;
+}
+
+export async function redeemImageShareLink(code: string) {
+  const authKey = await getStoredAuthKey();
+  const response = await fetch("/api/ip-limited/share-link/redeem", {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+      Authorization: authKey ? `Bearer ${authKey}` : "",
+      "X-Device-Fingerprint": await getDeviceFingerprint(),
+    },
+    body: JSON.stringify({ code }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
+      `领取分享奖励失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as ImageShareRedeemResponse;
 }
 
 export async function polishImagePrompt(prompt: string, mode: "generate" | "edit" = "generate") {

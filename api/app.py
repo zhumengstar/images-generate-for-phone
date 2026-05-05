@@ -41,8 +41,10 @@ PROMPT_POLISH_API_KEY = os.getenv("IMAGE_PROMPT_POLISH_API_KEY", "")
 PROMPT_POLISH_CONFIG_PATH = DATA_DIR / "prompt_polish_config.json"
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
+IMAGE_SHARE_REWARDS_PATH = DATA_DIR / "image_share_rewards.json"
 IP_QUOTA_LOCK = Lock()
 IP_IMAGE_TASKS_LOCK = Lock()
+IMAGE_SHARE_REWARDS_LOCK = Lock()
 ACTIVE_IP_TASK_LOCK = Lock()
 ACTIVE_IP_TASKS: set[str] = set()
 ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
@@ -227,6 +229,77 @@ def _remaining_ip_quota(quota_key: str, limit: int) -> int:
     with IP_QUOTA_LOCK:
         used = _load_ip_quotas().get(quota_key, 0)
         return max(0, limit - used)
+
+
+def _load_share_rewards() -> dict[str, dict[str, Any]]:
+    try:
+        data = json.loads(IMAGE_SHARE_REWARDS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+
+
+def _save_share_rewards(items: dict[str, dict[str, Any]]) -> None:
+    IMAGE_SHARE_REWARDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    IMAGE_SHARE_REWARDS_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _create_image_share_reward(subject: dict[str, object]) -> dict[str, object]:
+    subject_type = str(subject.get("type") or "")
+    if subject_type not in {"user", "guest"}:
+        raise HTTPException(status_code=400, detail={"error": "当前账号无需分享奖励"})
+    now = _now_iso()
+    with IMAGE_SHARE_REWARDS_LOCK:
+        items = _load_share_rewards()
+        code = uuid.uuid4().hex[:16]
+        while code in items:
+            code = uuid.uuid4().hex[:16]
+        items[code] = {
+            "code": code,
+            "owner_type": subject_type,
+            "owner_user_id": str(subject.get("user_id") or ""),
+            "owner_name": str(subject.get("name") or ""),
+            "owner_fingerprint": str(subject.get("fingerprint") or ""),
+            "created_at": now,
+            "redeemed_by": [],
+        }
+        _save_share_rewards(items)
+    return {"code": code, "created_at": now}
+
+
+def _award_share_owner_quota(item: dict[str, Any]) -> None:
+    owner_type = str(item.get("owner_type") or "")
+    owner_user_id = str(item.get("owner_user_id") or "")
+    default_limit = GUEST_IMAGE_QUOTA_LIMIT if owner_type == "guest" else USER_IMAGE_QUOTA_LIMIT
+    web_user_service.increment_quota_limit(owner_user_id, 1, default_limit)
+
+
+def _redeem_image_share_reward(code: str, redeemer: dict[str, object]) -> dict[str, object]:
+    normalized_code = re.sub(r"[^a-zA-Z0-9]", "", code or "")[:64]
+    if not normalized_code:
+        raise HTTPException(status_code=400, detail={"error": "分享链接无效"})
+    redeemer_fingerprint = str(redeemer.get("fingerprint") or "").strip()
+    if not redeemer_fingerprint:
+        raise HTTPException(status_code=400, detail={"error": "无法识别当前设备"})
+    with IMAGE_SHARE_REWARDS_LOCK:
+        items = _load_share_rewards()
+        item = items.get(normalized_code)
+        if item is None:
+            raise HTTPException(status_code=404, detail={"error": "分享链接不存在或已失效"})
+        owner_fingerprint = str(item.get("owner_fingerprint") or "").strip()
+        if owner_fingerprint and owner_fingerprint == redeemer_fingerprint:
+            return {"awarded": False, "message": "请使用其他设备打开分享链接领取奖励"}
+        redeemed_by = [str(value) for value in item.get("redeemed_by", []) if value]
+        if redeemer_fingerprint in redeemed_by:
+            return {"awarded": False, "message": "该设备已领取过这个分享奖励"}
+        _award_share_owner_quota(item)
+        item["redeemed_by"] = [*redeemed_by, redeemer_fingerprint]
+        item["last_redeemed_at"] = _now_iso()
+        items[normalized_code] = item
+        _save_share_rewards(items)
+    return {"awarded": True, "message": "已为分享用户增加 1 次图片额度"}
 
 
 def _usable_image_count(data: dict[str, Any]) -> int:
@@ -938,6 +1011,30 @@ def create_app() -> FastAPI:
         subject = _quota_subject(request, ip, fingerprint)
         _refund_ip_quota(str(subject["key"]), count)
         return _ip_quota_payload(request, ip, fingerprint)
+
+    @app.post("/api/ip-limited/share-link")
+    async def create_image_share_link(request: Request):
+        ip = _client_ip(request)
+        fingerprint = _device_fingerprint(request)
+        subject = _quota_subject(request, ip, fingerprint)
+        reward = _create_image_share_reward(subject)
+        return {
+            **reward,
+            "share_path": f"/image?share={reward['code']}",
+        }
+
+    @app.post("/api/ip-limited/share-link/redeem")
+    async def redeem_image_share_link(request: Request):
+        payload = await _read_json_object(request)
+        code = str(payload.get("code") or "").strip()
+        ip = _client_ip(request)
+        fingerprint = _device_fingerprint(request)
+        redeemer = _quota_subject(request, ip, fingerprint)
+        result = _redeem_image_share_reward(code, redeemer)
+        return {
+            **result,
+            "ip_quota": _ip_quota_payload(request, ip, fingerprint),
+        }
 
     @app.post("/api/ip-limited/prompt-polish")
     async def polish_prompt(request: Request):

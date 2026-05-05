@@ -23,6 +23,7 @@ import {
   fetchImageTasks,
   fetchIpQuota,
   polishImagePrompt,
+  redeemImageShareLink,
   refundIpQuota,
   type ImageResponse,
   type ImageTask,
@@ -51,6 +52,7 @@ const IMAGE_SIZE_STORAGE_KEY = "images-generate:image_last_size";
 const LEGACY_IMAGE_STORAGE_PREFIX = String.fromCharCode(99, 104, 97, 116, 103, 112, 116, 50, 97, 112, 105);
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last_size`;
+const DEFAULT_IMAGE_SIZE = "1:1";
 const MOBILE_SHELL_TOP_HEIGHT = 48;
 const DESKTOP_MAX_CONCURRENT_IMAGE_TASKS = 2;
 const MOBILE_MAX_CONCURRENT_IMAGE_TASKS = 1;
@@ -534,22 +536,31 @@ function ImagePageContent() {
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const redeemedShareCodeRef = useRef("");
 
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
-  const [imageSize, setImageSize] = useState("");
+  const [imageSize, setImageSize] = useState(DEFAULT_IMAGE_SIZE);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     if (typeof window === "undefined") {
       return false;
     }
-    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+    const storedValue = window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
+    if (storedValue === "1" || storedValue === "0") {
+      return storedValue === "1";
+    }
+    return window.innerWidth >= 1024;
   });
   const [isTopInfoCollapsed, setIsTopInfoCollapsed] = useState(() => {
     if (typeof window === "undefined") {
       return false;
     }
-    return window.localStorage.getItem(TOP_INFO_COLLAPSED_STORAGE_KEY) === "1";
+    const storedValue = window.localStorage.getItem(TOP_INFO_COLLAPSED_STORAGE_KEY);
+    if (storedValue === "1" || storedValue === "0") {
+      return storedValue === "1";
+    }
+    return window.innerWidth >= 640;
   });
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -624,6 +635,38 @@ function ImagePageContent() {
 
   useEffect(() => {
     void loadIpQuota();
+  }, [loadIpQuota]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const shareCode = new URLSearchParams(window.location.search).get("share")?.trim() || "";
+    if (!shareCode || redeemedShareCodeRef.current === shareCode) {
+      return;
+    }
+    redeemedShareCodeRef.current = shareCode;
+    void redeemImageShareLink(shareCode)
+      .then((result) => {
+        if (result.awarded) {
+          toast.success(result.message || "已领取分享奖励");
+        } else {
+          toast.info(result.message || "分享奖励无需重复领取");
+        }
+        if (result.ip_quota) {
+          setIpQuota(result.ip_quota);
+        } else {
+          void loadIpQuota();
+        }
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "领取分享奖励失败"));
+      })
+      .finally(() => {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("share");
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      });
   }, [loadIpQuota]);
 
   useEffect(() => {
@@ -800,7 +843,7 @@ function ImagePageContent() {
             ? window.localStorage.getItem(IMAGE_SIZE_STORAGE_KEY) ||
               window.localStorage.getItem(LEGACY_IMAGE_SIZE_STORAGE_KEY)
             : null;
-        setImageSize(storedSize || "");
+        setImageSize(storedSize || DEFAULT_IMAGE_SIZE);
         setImageCount("1");
 
         const items = await listImageConversations();

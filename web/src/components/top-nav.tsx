@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Github, LogIn, LogOut, UserRound } from "lucide-react";
+import { Github, LogIn, LogOut, Share2, UserRound } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { toast } from "sonner";
 
 import webConfig from "@/constants/common-env";
-import { login } from "@/lib/api";
+import { createImageShareLink, login } from "@/lib/api";
 import { clearStoredAuthSession, getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,22 @@ const anonymousImageSession: StoredAuthSession = {
   isGuest: true,
 };
 
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
 export function TopNav() {
   const pathname = usePathname();
   const isImagePagePath = pathname === "/" || pathname === "/image" || pathname.startsWith("/image/");
@@ -34,6 +50,7 @@ export function TopNav() {
   );
   const [isDeviceRegistered, setIsDeviceRegistered] = useState(false);
   const [imageMode, setImageMode] = useState<ImageMode>("generate");
+  const [isCreatingShareLink, setIsCreatingShareLink] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -100,6 +117,24 @@ export function TopNav() {
     window.location.replace("/");
   };
 
+  const handleCreateShareLink = async () => {
+    if (isCreatingShareLink || typeof window === "undefined") {
+      return;
+    }
+    setIsCreatingShareLink(true);
+    try {
+      const result = await createImageShareLink();
+      const url = new URL(result.share_path, window.location.origin).toString();
+      await copyTextToClipboard(url);
+      toast.success("分享链接已复制，其他设备打开后可为你增加 1 次额度");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "创建分享链接失败";
+      toast.error(message);
+    } finally {
+      setIsCreatingShareLink(false);
+    }
+  };
+
   if (pathname === "/login" || session === undefined || !session) {
     return null;
   }
@@ -157,6 +192,17 @@ export function TopNav() {
                 图片编辑
               </button>
             </div>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 text-[12px] font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950 disabled:cursor-wait disabled:opacity-60 sm:px-3"
+              onClick={() => void handleCreateShareLink()}
+              disabled={isCreatingShareLink}
+              aria-label="生成分享链接"
+              title="生成分享链接"
+            >
+              <Share2 className="size-3.5" />
+              <span className="hidden sm:inline">分享</span>
+            </button>
             {!isGuest && session.role === "admin" ? (
               <Link
                 href="/users"

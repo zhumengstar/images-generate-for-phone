@@ -392,6 +392,29 @@ class WebUserService:
                 return self._public_item(next_item)
         raise ValueError("用户不存在")
 
+    def increment_quota_limit(self, user_id: str, amount: int, default_limit: int) -> dict[str, object]:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            raise ValueError("用户不存在")
+        increment = max(0, int(amount))
+        with self._lock:
+            for index, item in enumerate(self._items):
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                if public.get("role") == "admin":
+                    return public
+                if public.get("role") not in {"user", "guest"}:
+                    raise ValueError("只能奖励用户或访客的图片额度")
+                current_limit = self._quota_limit_for_item(item, default_limit)
+                next_limit = -1 if current_limit < 0 else current_limit + increment
+                next_item = dict(item)
+                next_item["quota_limit"] = next_limit
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item)
+        raise ValueError("用户不存在")
+
     def quota_usage_target(self, user_id: str) -> dict[str, str]:
         normalized_id = _clean(user_id)
         if not normalized_id:
