@@ -192,17 +192,22 @@ export function TopNav() {
                 图片编辑
               </button>
             </div>
-            <button
-              type="button"
-              className="inline-flex h-9 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 text-[12px] font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950 disabled:cursor-wait disabled:opacity-60 sm:px-3"
-              onClick={() => void handleCreateShareLink()}
-              disabled={isCreatingShareLink}
-              aria-label="生成分享链接"
-              title="生成分享链接"
-            >
-              <Share2 className="size-3.5" />
-              <span className="hidden sm:inline">分享</span>
-            </button>
+            <div className="flex min-w-0 shrink-0 items-center gap-1.5">
+              <span className="hidden max-w-[128px] truncate text-[11px] font-medium text-stone-500 min-[390px]:inline sm:max-w-none sm:text-xs">
+                分享得 1 次额度
+              </span>
+              <button
+                type="button"
+                className="inline-flex h-9 items-center gap-1 rounded-full border border-stone-200 bg-white px-2.5 text-[12px] font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950 disabled:cursor-wait disabled:opacity-60 sm:px-3"
+                onClick={() => void handleCreateShareLink()}
+                disabled={isCreatingShareLink}
+                aria-label="生成分享链接"
+                title="生成分享链接"
+              >
+                <Share2 className="size-3.5" />
+                <span className="hidden sm:inline">分享</span>
+              </button>
+            </div>
             {!isGuest && session.role === "admin" ? (
               <Link
                 href="/users"
