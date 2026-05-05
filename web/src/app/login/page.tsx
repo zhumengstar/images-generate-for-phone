@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Eye, EyeOff, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
 import { toast } from "sonner";
 
@@ -19,7 +19,22 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeviceRegistered, setIsDeviceRegistered] = useState(false);
   const { isCheckingAuth } = useRedirectIfAuthenticated();
+
+  useEffect(() => {
+    let active = true;
+    const loadDeviceState = async () => {
+      const data = await login("").catch(() => null);
+      if (active && data) {
+        setIsDeviceRegistered(Boolean(data.device_registered));
+      }
+    };
+    void loadDeviceState();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleLogin = async () => {
     const normalizedUsername = username.trim();
@@ -43,7 +58,7 @@ export default function LoginPage() {
         subjectId: data.subject_id,
         name: data.name || normalizedUsername,
       });
-      toast.success("已登录，本设备会使用当前用户额度");
+      toast.success(isDeviceRegistered ? "已登录，本设备会使用当前用户额度" : "已注册并登录，本设备会使用当前用户额度");
       router.replace(getDefaultRouteForRole(data.role));
     } catch (error) {
       const message = error instanceof Error ? error.message : "登录失败";
@@ -74,7 +89,7 @@ export default function LoginPage() {
               <ArrowLeft className="size-4" />
             </Link>
             <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600">
-              登录用户 20 张
+              {isDeviceRegistered ? "登录用户" : "注册用户"}
             </span>
           </div>
 
@@ -83,8 +98,12 @@ export default function LoginPage() {
               <LockKeyhole className="size-5" />
             </div>
             <div className="space-y-1.5">
-              <h1 className="text-2xl font-semibold tracking-tight text-stone-950">登录后生成更多图片</h1>
-              <p className="text-sm leading-6 text-stone-500">访客可生成 5 张，登录后当前设备使用你的 20 张额度。</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-stone-950">
+                {isDeviceRegistered ? "登录后继续使用" : "注册后生成更多图片"}
+              </h1>
+              <p className="text-sm leading-6 text-stone-500">
+                {isDeviceRegistered ? "当前设备已绑定用户，请登录原用户继续使用。" : "当前设备首次使用，填写用户名和密码即可注册。"}
+              </p>
             </div>
           </div>
 
@@ -147,7 +166,7 @@ export default function LoginPage() {
             disabled={isSubmitting}
           >
             {isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
-            登录
+            {isDeviceRegistered ? "登录" : "注册"}
           </Button>
 
           <Link

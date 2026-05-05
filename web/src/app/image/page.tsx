@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, History, LoaderCircle, PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,7 +52,9 @@ const LEGACY_IMAGE_STORAGE_PREFIX = String.fromCharCode(99, 104, 97, 116, 103, 1
 const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_active_conversation_id`;
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last_size`;
 const MOBILE_SHELL_TOP_HEIGHT = 48;
-const MAX_CONCURRENT_IMAGE_TASKS = 2;
+const DESKTOP_MAX_CONCURRENT_IMAGE_TASKS = 2;
+const MOBILE_MAX_CONCURRENT_IMAGE_TASKS = 1;
+const MAX_QUEUED_IMAGE_TASKS = 4;
 
 function clampImageCount(value: string) {
   return String(Math.min(2, Math.max(1, Math.floor(Number(value) || 1))));
@@ -92,6 +94,11 @@ function formatIpQuotaType(quota: IpQuotaResponse | null) {
     return "管理员";
   }
   return quota?.type === "user" ? "用户" : "访客";
+}
+
+function formatIpQuotaName(quota: IpQuotaResponse | null) {
+  const name = String(quota?.name || "").trim();
+  return name || formatIpQuotaType(quota);
 }
 
 function createId() {
@@ -134,7 +141,13 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
 }
 
 async function fetchImageAsFile(url: string, fileName: string) {
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
+  });
   if (!response.ok) {
     throw new Error("读取结果图失败");
   }
@@ -306,6 +319,13 @@ function runWhenIdle(callback: () => void) {
   window.setTimeout(callback, 300);
 }
 
+function getMaxConcurrentImageTasks() {
+  if (typeof window !== "undefined" && window.innerWidth < 640) {
+    return MOBILE_MAX_CONCURRENT_IMAGE_TASKS;
+  }
+  return DESKTOP_MAX_CONCURRENT_IMAGE_TASKS;
+}
+
 function hasLoadingTurn(conversation: ImageConversation, status?: ImageTurnStatus) {
   return conversation.turns.some(
     (turn) =>
@@ -340,7 +360,7 @@ function getImageTaskStats(items: ImageConversation[]) {
         if (image.status !== "loading") {
           continue;
         }
-        if (activeImageTaskIds.has(getImageTaskKey(conversation.id, turn.id, image.id))) {
+        if (turn.status === "generating" || activeImageTaskIds.has(getImageTaskKey(conversation.id, turn.id, image.id))) {
           running += 1;
         } else {
           queued += 1;
@@ -350,6 +370,25 @@ function getImageTaskStats(items: ImageConversation[]) {
   }
 
   return { queued, running };
+}
+
+function getWaitingImageTaskCount(items: ImageConversation[]) {
+  let waiting = 0;
+
+  for (const conversation of items) {
+    for (const turn of conversation.turns) {
+      if (turn.status !== "queued") {
+        continue;
+      }
+      for (const image of turn.images) {
+        if (image.status === "loading" && !activeImageTaskIds.has(getImageTaskKey(conversation.id, turn.id, image.id))) {
+          waiting += 1;
+        }
+      }
+    }
+  }
+
+  return waiting;
 }
 
 function deriveTurnStatus(turn: ImageTurn): Pick<ImageTurn, "status" | "error"> {
@@ -490,6 +529,8 @@ async function recoverConversationHistory(items: ImageConversation[]) {
 function ImagePageContent() {
   const didNotifyRestoredTasksRef = useRef(false);
   const conversationsRef = useRef<ImageConversation[]>([]);
+  const pendingConversationSaveTimersRef = useRef<Map<string, number>>(new Map());
+  const pendingConversationSavesRef = useRef<Map<string, ImageConversation>>(new Map());
   const resultsViewportRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -529,6 +570,7 @@ function ImagePageContent() {
     () => conversations.find((item) => item.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
   );
+  const deferredSelectedConversation = useDeferredValue(selectedConversation);
   const taskStats = useMemo(
     () => getImageTaskStats(conversations),
     [conversations],
@@ -587,6 +629,19 @@ function ImagePageContent() {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    const pendingTimers = pendingConversationSaveTimersRef.current;
+    const pendingSaves = pendingConversationSavesRef.current;
+    return () => {
+      pendingTimers.forEach((timer) => window.clearTimeout(timer));
+      pendingTimers.clear();
+      pendingSaves.forEach((conversation) => {
+        void saveImageConversation(conversation);
+      });
+      pendingSaves.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -793,8 +848,10 @@ function ImagePageContent() {
     };
   }, []);
 
+  const selectedConversationTurnCount = selectedConversation?.turns.length ?? 0;
+
   useEffect(() => {
-    if (!selectedConversation) {
+    if (!selectedConversationId || selectedConversationTurnCount === 0) {
       return;
     }
 
@@ -803,9 +860,8 @@ function ImagePageContent() {
   }, [
     isLoadingHistory,
     scheduleScrollResultsToBottom,
-    selectedConversation,
-    selectedConversation?.turns.length,
-    selectedConversation?.updatedAt,
+    selectedConversationId,
+    selectedConversationTurnCount,
   ]);
 
   useEffect(() => {
@@ -878,6 +934,23 @@ function ImagePageContent() {
     await saveImageConversation(conversation);
   };
 
+  const scheduleSaveConversation = useCallback((conversation: ImageConversation) => {
+    const pendingTimers = pendingConversationSaveTimersRef.current;
+    const pendingSaves = pendingConversationSavesRef.current;
+    const previousTimer = pendingTimers.get(conversation.id);
+    if (previousTimer) {
+      window.clearTimeout(previousTimer);
+    }
+    pendingSaves.set(conversation.id, conversation);
+    const timer = window.setTimeout(() => {
+      pendingTimers.delete(conversation.id);
+      const latestConversation = pendingSaves.get(conversation.id) ?? conversation;
+      pendingSaves.delete(conversation.id);
+      void saveImageConversation(latestConversation);
+    }, 500);
+    pendingTimers.set(conversation.id, timer);
+  }, []);
+
   const updateConversation = useCallback(
     async (
       conversationId: string,
@@ -891,12 +964,14 @@ function ImagePageContent() {
         ...conversationsRef.current.filter((item) => item.id !== conversationId),
       ]);
       conversationsRef.current = nextConversations;
-      setConversations(nextConversations);
+      startTransition(() => {
+        setConversations(nextConversations);
+      });
       if (options.persist !== false) {
-        await saveImageConversation(nextConversation);
+        scheduleSaveConversation(nextConversation);
       }
     },
-    [],
+    [scheduleSaveConversation],
   );
 
   const clearComposerInputs = useCallback(() => {
@@ -1152,7 +1227,7 @@ function ImagePageContent() {
   /* eslint-disable react-hooks/preserve-manual-memoization */
   const runConversationQueue = useCallback(
     async (conversationId: string) => {
-      const availableSlots = MAX_CONCURRENT_IMAGE_TASKS - activeImageTaskIds.size;
+      const availableSlots = getMaxConcurrentImageTasks() - activeImageTaskIds.size;
       if (availableSlots <= 0) {
         return;
       }
@@ -1402,12 +1477,13 @@ function ImagePageContent() {
         toast.error(message);
       } finally {
         activeTaskKeys.forEach((key) => activeImageTaskIds.delete(key));
-        while (activeImageTaskIds.size < MAX_CONCURRENT_IMAGE_TASKS) {
+        if (activeImageTaskIds.size < getMaxConcurrentImageTasks()) {
           const nextConversation = findRunnableConversation(conversationsRef.current);
-          if (!nextConversation) {
-            break;
+          if (nextConversation) {
+            runWhenIdle(() => {
+              void runConversationQueue(nextConversation.id);
+            });
           }
-          void runConversationQueue(nextConversation.id);
         }
       }
     },
@@ -1415,14 +1491,86 @@ function ImagePageContent() {
   );
   /* eslint-enable react-hooks/preserve-manual-memoization */
 
-  useEffect(() => {
-    while (activeImageTaskIds.size < MAX_CONCURRENT_IMAGE_TASKS) {
-      const nextConversation = findRunnableConversation(conversations);
-      if (!nextConversation) {
-        break;
+  const createSubmittedImageTasks = useCallback(
+    async (
+      conversationId: string,
+      turnId: string,
+      turn: ImageTurn,
+      editFiles: File[],
+    ) => {
+      const createdImages = await Promise.allSettled(
+        turn.images.map(async (image) => {
+          const taskId = image.taskId || image.id;
+          const task =
+            turn.mode === "edit"
+              ? await createImageEditTask(taskId, editFiles, turn.prompt, turn.model, turn.size)
+              : await createImageGenerationTask(taskId, turn.prompt, turn.model, turn.size);
+          return {
+            imageId: image.id,
+            taskId: task.id || taskId,
+          };
+        }),
+      );
+      const createdTaskMap = new Map(
+        createdImages.flatMap((item) => (item.status === "fulfilled" ? [[item.value.imageId, item.value.taskId]] : [])),
+      );
+      const failedMessages = createdImages.flatMap((item) =>
+        item.status === "rejected" ? [getErrorMessage(item.reason, "创建图片任务失败")] : [],
+      );
+      await updateConversation(conversationId, (current) => {
+        const conversation = current ?? conversationsRef.current.find((item) => item.id === conversationId);
+        if (!conversation) {
+          throw new Error("未找到图片任务记录");
+        }
+        return {
+          ...conversation,
+          updatedAt: new Date().toISOString(),
+          turns: conversation.turns.map((item) =>
+            item.id === turnId
+              ? {
+                  ...item,
+                  status: createdTaskMap.size > 0 ? "generating" : "error",
+                  error: createdTaskMap.size > 0 ? undefined : failedMessages[0],
+                  images: item.images.map((image) => {
+                    const createdTaskId = createdTaskMap.get(image.id);
+                    return createdTaskId
+                      ? {
+                          ...image,
+                          taskId: createdTaskId,
+                          status: "loading",
+                          error: undefined,
+                        }
+                      : {
+                          ...image,
+                          status: "error",
+                          error: failedMessages[0] || "创建图片任务失败",
+                        };
+                  }),
+                }
+              : item,
+          ),
+        };
+      });
+      await loadIpQuota();
+      if (failedMessages.length > 0) {
+        toast.error(failedMessages[0]);
       }
-      void runConversationQueue(nextConversation.id);
+      return createdTaskMap.size;
+    },
+    [loadIpQuota, updateConversation],
+  );
+
+  useEffect(() => {
+    if (activeImageTaskIds.size >= getMaxConcurrentImageTasks()) {
+      return;
     }
+    const nextConversation = findRunnableConversation(conversations);
+    if (!nextConversation) {
+      return;
+    }
+    runWhenIdle(() => {
+      void runConversationQueue(nextConversation.id);
+    });
   }, [conversations, runConversationQueue]);
 
   const handleSubmit = async () => {
@@ -1436,8 +1584,14 @@ function ImagePageContent() {
       toast.error(`当前${formatIpQuotaType(ipQuota)}剩余额度不足，还剩 ${ipQuota.remaining} 张`);
       return;
     }
+    const waitingTaskCount = getWaitingImageTaskCount(conversationsRef.current);
+    if (waitingTaskCount + parsedCount > MAX_QUEUED_IMAGE_TASKS) {
+      toast.error(`当前最多只能排队 ${MAX_QUEUED_IMAGE_TASKS} 张图片，请等待前面的任务处理`);
+      return;
+    }
 
     const effectiveImageMode: ImageConversationMode = referenceImages.length > 0 ? "edit" : "generate";
+    const submittedReferenceImageFiles = referenceImageFiles;
 
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
@@ -1483,7 +1637,19 @@ function ImagePageContent() {
     clearComposerInputs();
 
     await persistConversation(baseConversation);
-    void runConversationQueue(conversationId);
+    const createdTaskCount = await createSubmittedImageTasks(
+      conversationId,
+      turnId,
+      draftTurn,
+      submittedReferenceImageFiles,
+    );
+    if (createdTaskCount === 0) {
+      await loadIpQuota();
+      return;
+    }
+    runWhenIdle(() => {
+      void runConversationQueue(conversationId);
+    });
 
     const targetStats = getImageTaskStats([baseConversation]);
     if (targetStats.running > 0 || targetStats.queued > 1) {
@@ -1525,7 +1691,7 @@ function ImagePageContent() {
       <section
         style={mobileShellHeight ? { height: `${mobileShellHeight}px` } : undefined}
         className={cn(
-          "fixed inset-x-0 top-12 z-10 grid min-h-0 w-full grid-cols-1 overflow-hidden px-0 pb-0 transition-[grid-template-columns] duration-300 sm:relative sm:top-auto sm:bottom-auto sm:z-auto sm:mx-auto sm:h-[calc(100dvh-5rem)] sm:max-w-[1380px] sm:gap-3 sm:px-3 sm:pb-6",
+          "fixed inset-x-0 top-12 z-10 grid min-h-0 w-full grid-cols-1 overflow-hidden px-0 pb-0 transition-[grid-template-columns] duration-300 sm:relative sm:inset-auto sm:z-auto sm:mx-auto sm:h-[calc(100dvh-5rem)] sm:max-w-[1380px] sm:translate-x-0 sm:gap-3 sm:px-3 sm:pb-6 lg:h-[calc(100dvh-5.75rem)] lg:rounded-[28px] lg:border lg:border-white/70 lg:bg-white/30 lg:p-3 lg:shadow-[0_28px_90px_-52px_rgba(68,64,60,0.55)] lg:backdrop-blur",
           !mobileShellHeight && "bottom-0",
           isSidebarCollapsed ? "lg:grid-cols-[56px_minmax(0,1fr)]" : "lg:grid-cols-[256px_minmax(0,1fr)]",
         )}
@@ -1566,7 +1732,7 @@ function ImagePageContent() {
               </div>
             </div>
           ) : (
-            <div className="flex h-full min-h-0 flex-col rounded-2xl border border-stone-200/70 bg-white/35 p-2 shadow-sm">
+            <div className="flex h-full min-h-0 flex-col rounded-[22px] border border-white/70 bg-white/65 p-2 shadow-sm">
               <div className="mb-2 flex justify-end">
                 <button
                   type="button"
@@ -1624,16 +1790,22 @@ function ImagePageContent() {
           </DialogContent>
         </Dialog>
 
-        <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:gap-4">
-          <section className="sticky top-0 z-40 shrink-0 bg-stone-50 sm:bg-transparent" aria-label="页面信息">
+        <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:gap-4 lg:grid-rows-[minmax(0,1fr)_auto] lg:rounded-[24px] lg:border lg:border-white/70 lg:bg-white/55 lg:p-3 lg:shadow-sm">
+          <section className="sticky top-0 z-40 shrink-0 bg-stone-50 sm:bg-transparent lg:hidden" aria-label="页面信息">
             {isTopInfoCollapsed ? (
-              <div className="flex items-center justify-between border-b border-stone-200/70 bg-white px-3 py-1.5 text-[11px] text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4">
-                <span className="inline-flex min-w-0 items-center gap-1.5">
-                  <span className="rounded-full bg-stone-950 px-2.5 py-1 font-medium text-white">剩余额度 {formatIpQuota(ipQuota)}</span>
+              <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden border-b border-stone-200/70 bg-white px-3 text-[11px] text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4">
+                <span className="grid min-w-0 grid-cols-[auto_minmax(0,42vw)] items-center gap-1.5">
+                  <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 text-white">
+                    <span className="font-medium">剩余额度</span>
+                    <span className="font-mono">{formatIpQuota(ipQuota)}</span>
+                  </span>
+                  <span className="inline-flex h-7 min-w-0 items-center rounded-full bg-stone-100 px-2.5 font-medium text-stone-600">
+                    <span className="truncate">{formatIpQuotaName(ipQuota)}</span>
+                  </span>
                 </span>
                 <button
                   type="button"
-                  className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
+                  className="inline-flex h-7 w-14 shrink-0 items-center justify-center gap-1 rounded-full border border-stone-200 bg-white px-0 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
                   onClick={() => setIsTopInfoCollapsed(false)}
                   aria-label="展开顶部信息"
                   title="展开顶部信息"
@@ -1644,16 +1816,19 @@ function ImagePageContent() {
               </div>
             ) : (
               <>
-                <div className="flex items-start gap-1.5 border-b border-stone-200/70 bg-white px-3 py-2 text-[11px] leading-5 text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
-                  <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 overflow-hidden">
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 py-1 text-white">
+                <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden border-b border-stone-200/70 bg-white px-3 text-[11px] leading-5 text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
+                  <div className="grid min-w-0 grid-cols-[auto_minmax(0,42vw)] items-center gap-1.5 overflow-hidden">
+                    <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 text-white">
                       <span className="font-medium">剩余额度</span>
                       <span className="font-mono">{formatIpQuota(ipQuota)}</span>
+                    </span>
+                    <span className="inline-flex h-7 min-w-0 items-center rounded-full bg-stone-100 px-2.5 font-medium text-stone-600">
+                      <span className="truncate">{formatIpQuotaName(ipQuota)}</span>
                     </span>
                   </div>
                   <button
                     type="button"
-                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
+                    className="inline-flex h-7 w-14 shrink-0 items-center justify-center gap-1 rounded-full border border-stone-200 bg-white px-0 text-[11px] font-medium text-stone-600 transition hover:bg-stone-50"
                     onClick={() => setIsTopInfoCollapsed(true)}
                     aria-label="收起顶部信息"
                     title="收起顶部信息"
@@ -1692,13 +1867,13 @@ function ImagePageContent() {
             )}
           </section>
 
-          <section className="image-middle-region min-h-0 overflow-hidden" aria-label="图片生成区域">
+          <section className="image-middle-region min-h-0 overflow-hidden lg:rounded-[20px] lg:border lg:border-stone-200/60 lg:bg-stone-50/45" aria-label="图片生成区域">
             <div
               ref={resultsViewportRef}
-              className="hide-scrollbar h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 py-2 sm:px-4 sm:py-4"
+              className="hide-scrollbar h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 py-2 sm:px-4 sm:py-4 lg:px-6 lg:py-5"
             >
               <ImageResults
-                selectedConversation={selectedConversation}
+                selectedConversation={deferredSelectedConversation}
                 onOpenLightbox={openLightbox}
                 onDeleteFailedImage={handleDeleteFailedImage}
                 formatConversationTime={formatConversationTime}
@@ -1706,11 +1881,12 @@ function ImagePageContent() {
             </div>
           </section>
 
-          <section className="z-30 shrink-0" aria-label="输入区域">
+          <section className="z-50 shrink-0" aria-label="输入区域">
             <ImageComposer
               prompt={imagePrompt}
               imageCount={imageCount}
               imageSize={imageSize}
+              quotaLabel={formatIpQuota(ipQuota)}
               queuedTaskCount={taskStats.queued}
               runningTaskCount={taskStats.running}
               isPolishingPrompt={isPolishingPrompt}

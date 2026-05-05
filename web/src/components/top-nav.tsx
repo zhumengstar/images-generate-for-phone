@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { toast } from "sonner";
 
 import webConfig from "@/constants/common-env";
+import { login } from "@/lib/api";
 import { clearStoredAuthSession, getStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,7 @@ export function TopNav() {
   const [session, setSession] = useState<StoredAuthSession | null | undefined>(
     isImagePagePath ? anonymousImageSession : undefined,
   );
+  const [isDeviceRegistered, setIsDeviceRegistered] = useState(false);
   const [imageMode, setImageMode] = useState<ImageMode>("generate");
 
   useEffect(() => {
@@ -47,6 +49,18 @@ export function TopNav() {
         return;
       }
       setSession(storedSession || (isImagePagePath ? anonymousImageSession : null));
+      if (!storedSession && isImagePagePath) {
+        const guest = await login("").catch(() => null);
+        if (active && guest) {
+          setIsDeviceRegistered(Boolean(guest.device_registered));
+          setSession({
+            ...anonymousImageSession,
+            role: guest.role,
+            subjectId: guest.subject_id,
+            name: guest.name || "访客",
+          });
+        }
+      }
     };
 
     void load();
@@ -96,7 +110,7 @@ export function TopNav() {
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-40 shrink-0 touch-none select-none overscroll-contain border-b border-stone-200/70 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/88 sm:relative sm:inset-auto sm:z-auto sm:touch-auto sm:bg-white/75 sm:shadow-none">
+      <header className="fixed inset-x-0 top-0 z-40 shrink-0 touch-none select-none overscroll-contain border-b border-stone-200/70 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/88 sm:sticky sm:inset-x-auto sm:z-40 sm:touch-auto sm:bg-white/85 sm:shadow-none">
         <div className="mx-auto grid min-h-12 max-w-[1440px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 sm:flex sm:min-h-12 sm:gap-3 sm:px-6 sm:py-1">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
           <Link
@@ -155,10 +169,10 @@ export function TopNav() {
               <Link
                 href="/login"
                 className="inline-flex h-9 items-center gap-1 rounded-full bg-stone-950 px-3 text-[12px] font-bold text-white shadow-sm transition hover:bg-stone-800 sm:px-4 sm:text-sm"
-                aria-label="登录"
+                aria-label={isDeviceRegistered ? "登录" : "注册"}
               >
                 <LogIn className="size-3.5" />
-                登录
+                {isDeviceRegistered ? "登录" : "注册"}
               </Link>
             ) : (
               <div className="flex h-9 items-center gap-1 rounded-full border border-stone-200 bg-white px-1.5 shadow-sm">

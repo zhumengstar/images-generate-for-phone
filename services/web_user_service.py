@@ -61,7 +61,7 @@ class WebUserService:
         return {
             "id": item.get("id"),
             "name": item.get("username"),
-            "role": item.get("role") if item.get("role") in {"admin", "user"} else "user",
+            "role": item.get("role") if item.get("role") in {"admin", "user", "guest"} else "user",
             "created_at": item.get("created_at"),
             "last_used_at": item.get("last_used_at"),
         }
@@ -71,12 +71,67 @@ class WebUserService:
         if not normalized_device:
             return None
         for index, item in enumerate(self._items):
-            if self._public_item(item).get("role") == "admin":
+            if self._public_item(item).get("role") != "user":
                 continue
             sessions = _sessions(item)
             if normalized_device in sessions or _clean(item.get("device_fingerprint")) == normalized_device:
                 return index
         return None
+
+    def record_guest(self, ip: str, device_fingerprint: str) -> dict[str, object] | None:
+        normalized_device = _clean(device_fingerprint)
+        if not normalized_device or normalized_device == "unknown":
+            return None
+        normalized_ip = _clean(ip) or "unknown"
+        with self._lock:
+            if self._device_owner_index(normalized_device) is not None:
+                return None
+            now = _now_iso()
+            guest_id = f"guest-{hashlib.sha256(normalized_device.encode('utf-8')).hexdigest()[:12]}"
+            for index, item in enumerate(self._items):
+                if self._public_item(item).get("role") != "guest":
+                    continue
+                if _clean(item.get("device_fingerprint")) != normalized_device:
+                    continue
+                next_item = dict(item)
+                next_item["ip"] = normalized_ip
+                next_item["last_used_at"] = now
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item)
+            item = {
+                "id": guest_id,
+                "username": f"访客 {guest_id[-6:]}",
+                "role": "guest",
+                "ip": normalized_ip,
+                "device_fingerprint": normalized_device,
+                "created_at": now,
+                "last_used_at": now,
+            }
+            self._items.append(item)
+            self._save()
+            return self._public_item(item)
+
+    def promote_guest_to_user(self, user_id: str, device_fingerprint: str) -> int:
+        normalized_id = _clean(user_id)
+        normalized_device = _clean(device_fingerprint)
+        if not normalized_id or not normalized_device:
+            return 0
+        removed = 0
+        with self._lock:
+            next_items: list[dict[str, object]] = []
+            for item in self._items:
+                if self._public_item(item).get("role") == "guest" and _clean(item.get("device_fingerprint")) == normalized_device:
+                    removed += 1
+                    continue
+                next_items.append(item)
+            if removed:
+                self._items = next_items
+                self._save()
+        return removed
+
+    def is_device_registered(self, device_fingerprint: str) -> bool:
+        return self._device_owner_index(device_fingerprint) is not None
 
     def _ensure_admin(self) -> None:
         with self._lock:
@@ -129,6 +184,8 @@ class WebUserService:
             matched_index: int | None = None
             matched_item: dict[str, object] | None = None
             for index, item in enumerate(self._items):
+                if self._public_item(item).get("role") == "guest":
+                    continue
                 if _clean(item.get("username")).lower() != normalized_username.lower():
                     continue
                 matched_index = index
@@ -174,12 +231,12 @@ class WebUserService:
                     next_item = dict(raw_item)
                     item_role = self._public_item(next_item).get("role")
                     sessions = _sessions(next_item) if index == matched_index or isinstance(next_item.get("sessions"), dict) else {}
-                    if item_role != "admin":
+                    if item_role == "user":
                         sessions.pop(normalized_device, None)
                     next_item["sessions"] = sessions
-                    if index != matched_index and item_role != "admin" and not sessions:
+                    if index != matched_index and item_role == "user" and not sessions:
                         next_item["token"] = ""
-                    if index != matched_index and item_role != "admin" and _clean(next_item.get("device_fingerprint")) == normalized_device:
+                    if index != matched_index and item_role == "user" and _clean(next_item.get("device_fingerprint")) == normalized_device:
                         next_item["device_fingerprint"] = ""
                     self._items[index] = next_item
 
@@ -210,7 +267,7 @@ class WebUserService:
                 return self._public_item(next_item)
         return None
 
-    def list_users(self, quota_items: dict[str, int] | None = None, user_limit: int = 20) -> list[dict[str, object]]:
+    def list_users(self, quota_items: dict[str, int] | None = None, user_limit: int = 20, guest_limit: int = 5) -> list[dict[str, object]]:
         quota_items = quota_items or {}
         with self._lock:
             items = [dict(item) for item in self._items]
@@ -219,34 +276,138 @@ class WebUserService:
         for item in items:
             public = self._public_item(item)
             user_id = _clean(public.get("id"))
-            device_usages = [
-                {
-                    "device": key.rsplit("|", 1)[-1],
-                    "used": max(0, int(value or 0)),
-                    "remaining": max(0, user_limit - max(0, int(value or 0))),
-                }
-                for key, value in quota_items.items()
-                if key.startswith(f"user|{user_id}|")
-            ]
+            is_admin = public.get("role") == "admin"
+            is_guest = public.get("role") == "guest"
+            quota_limit = -1 if is_admin else self._quota_limit_for_item(item, guest_limit if is_guest else user_limit)
+            if is_guest:
+                guest_fingerprint = _clean(item.get("device_fingerprint"))
+                device_usages = [
+                    {
+                        "device": key.rsplit("|", 1)[-1],
+                        "used": max(0, int(value or 0)),
+                        "remaining": max(0, quota_limit - max(0, int(value or 0))),
+                    }
+                    for key, value in quota_items.items()
+                    if "|" in key and key.rsplit("|", 1)[-1] == guest_fingerprint
+                ]
+            else:
+                device_usages = [
+                    {
+                        "device": key.rsplit("|", 1)[-1],
+                        "used": max(0, int(value or 0)),
+                        "remaining": -1 if quota_limit < 0 else max(0, quota_limit - max(0, int(value or 0))),
+                    }
+                    for key, value in quota_items.items()
+                    if key.startswith(f"user|{user_id}|")
+                ]
             used_total = sum(int(usage["used"]) for usage in device_usages)
             sessions = _sessions(item)
-            is_admin = public.get("role") == "admin"
             real_session_devices = [key for key in sessions if not key.startswith("admin|") and key != "legacy"]
             users.append(
                 {
                     **public,
                     "username": public.get("name"),
-                    "active_sessions": len(sessions),
-                    "device_count": 0 if is_admin else len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages}),
+                    "active_sessions": 0 if is_guest else len(sessions),
+                    "device_count": 0 if is_admin else len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages} | ({_clean(item.get("device_fingerprint"))} if is_guest else set())),
                     "used_total": used_total,
-                    "quota_limit": -1 if is_admin else user_limit,
-                    "remaining_total": -1 if is_admin else max(0, user_limit - used_total),
+                    "quota_limit": quota_limit,
+                    "remaining_total": -1 if quota_limit < 0 else max(0, quota_limit - used_total),
                     "device_usages": device_usages,
                     "password_saved": bool(_clean(item.get("password_hash"))),
                 }
             )
-        users.sort(key=lambda item: (item.get("role") != "admin", str(item.get("created_at") or "")))
+        role_order = {"admin": 0, "user": 1, "guest": 2}
+        users.sort(key=lambda item: (role_order.get(str(item.get("role")), 9), str(item.get("created_at") or "")))
         return users
+
+    @staticmethod
+    def _quota_limit_for_item(item: dict[str, object], default_limit: int) -> int:
+        value = item.get("quota_limit")
+        if value is None or value == "":
+            return max(0, int(default_limit))
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return max(0, int(default_limit))
+        return -1 if parsed < 0 else max(0, parsed)
+
+    def get_quota_limit(self, user_id: str, default_limit: int) -> int:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            return max(0, int(default_limit))
+        with self._lock:
+            for item in self._items:
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                if public.get("role") == "admin":
+                    return -1
+                return self._quota_limit_for_item(item, default_limit)
+        return max(0, int(default_limit))
+
+    def get_guest_quota_limit(self, device_fingerprint: str, default_limit: int) -> int:
+        normalized_device = _clean(device_fingerprint)
+        if not normalized_device:
+            return max(0, int(default_limit))
+        with self._lock:
+            for item in self._items:
+                public = self._public_item(item)
+                if public.get("role") != "guest":
+                    continue
+                if _clean(item.get("device_fingerprint")) == normalized_device:
+                    return self._quota_limit_for_item(item, default_limit)
+        return max(0, int(default_limit))
+
+    def get_guest_identity(self, device_fingerprint: str) -> dict[str, object] | None:
+        normalized_device = _clean(device_fingerprint)
+        if not normalized_device:
+            return None
+        with self._lock:
+            for item in self._items:
+                public = self._public_item(item)
+                if public.get("role") != "guest":
+                    continue
+                if _clean(item.get("device_fingerprint")) == normalized_device:
+                    return public
+        return None
+
+    def update_quota_limit(self, user_id: str, quota_limit: int, default_limit: int) -> dict[str, object]:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            raise ValueError("用户不存在")
+        normalized_limit = -1 if int(quota_limit) < 0 else max(0, int(quota_limit))
+        with self._lock:
+            for index, item in enumerate(self._items):
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                if public.get("role") == "admin":
+                    raise ValueError("管理员默认无限额度，无需设置")
+                if public.get("role") not in {"user", "guest"}:
+                    raise ValueError("只能设置用户或访客的图片额度")
+                next_item = dict(item)
+                next_item["quota_limit"] = normalized_limit
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item)
+        raise ValueError("用户不存在")
+
+    def quota_usage_target(self, user_id: str) -> dict[str, str]:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            raise ValueError("用户不存在")
+        with self._lock:
+            for item in self._items:
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                role = str(public.get("role") or "")
+                if role == "user":
+                    return {"role": role, "id": normalized_id, "device_fingerprint": _clean(item.get("device_fingerprint"))}
+                if role == "guest":
+                    return {"role": role, "id": normalized_id, "device_fingerprint": _clean(item.get("device_fingerprint"))}
+                raise ValueError("该用户不支持重置图片额度")
+        raise ValueError("用户不存在")
 
 
 web_user_service = WebUserService(WEB_USERS_PATH)

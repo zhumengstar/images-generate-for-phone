@@ -135,6 +135,7 @@ export type LoginResponse = {
   token?: string;
   ip?: string;
   fingerprint?: string;
+  device_registered?: boolean;
 };
 
 export type UserKey = {
@@ -150,7 +151,7 @@ export type WebUser = {
   id: string;
   username: string;
   name: string;
-  role: "admin" | "user";
+  role: "admin" | "user" | "guest";
   created_at: string | null;
   last_used_at: string | null;
   active_sessions: number;
@@ -228,6 +229,9 @@ function translateKnownErrorMessage(message: string): string {
   if (lower.includes("username or password is too long")) {
     return "用户名或密码过长";
   }
+  if (lower.includes("authorization is invalid")) {
+    return "登录状态已失效，请重新登录";
+  }
   if (lower.startsWith("request failed with status code")) {
     return "请求失败，请稍后重试";
   }
@@ -251,19 +255,32 @@ function errorMessageFromValue(value: unknown): string {
 export async function login(authKey: string, credentials?: { username: string; password: string }) {
   const normalizedAuthKey = String(authKey || "").trim();
   const deviceFingerprint = await getDeviceFingerprint();
-  return httpRequest<LoginResponse>("/auth/login", {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Device-Fingerprint": deviceFingerprint,
+  };
+  if (normalizedAuthKey) {
+    headers.Authorization = `Bearer ${normalizedAuthKey}`;
+  }
+  const response = await fetch("/auth/login", {
     method: "POST",
-    body: {
+    headers,
+    cache: "no-store",
+    body: JSON.stringify({
       device_fingerprint: deviceFingerprint,
       ...(credentials ? { username: credentials.username, password: credentials.password } : {}),
-    },
-    headers: {
-      ...(normalizedAuthKey ? { Authorization: `Bearer ${normalizedAuthKey}` } : {}),
-      "X-Device-Fingerprint": deviceFingerprint,
-    },
-    redirectOnUnauthorized: false,
-    skipAuth: !normalizedAuthKey,
+    }),
   });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      errorMessageFromValue(payload.detail) ||
+      errorMessageFromValue(payload.error) ||
+      translateKnownErrorMessage(String(payload.message || "")) ||
+      `登录失败 (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as LoginResponse;
 }
 
 export async function fetchAccounts() {
@@ -313,8 +330,11 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
   const deviceFingerprint = await getDeviceFingerprint();
   const response = await fetch("/api/ip-limited/images/generations", {
     method: "POST",
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": deviceFingerprint,
     },
@@ -344,6 +364,8 @@ export async function fetchIpQuota() {
   const response = await fetch("/api/ip-limited/quota", {
     cache: "no-store",
     headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": await getDeviceFingerprint(),
     },
@@ -358,8 +380,11 @@ export async function refundIpQuota(count = 1) {
   const authKey = await getStoredAuthKey();
   const response = await fetch("/api/ip-limited/quota/refund", {
     method: "POST",
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": await getDeviceFingerprint(),
     },
@@ -376,8 +401,11 @@ export async function polishImagePrompt(prompt: string, mode: "generate" | "edit
   const deviceFingerprint = await getDeviceFingerprint();
   const response = await fetch("/api/ip-limited/prompt-polish", {
     method: "POST",
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": deviceFingerprint,
     },
@@ -416,7 +444,10 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
 
   const response = await fetch("/api/ip-limited/images/edits", {
     method: "POST",
+    cache: "no-store",
     headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": deviceFingerprint,
     },
@@ -439,8 +470,11 @@ export async function createImageGenerationTask(clientTaskId: string, prompt: st
   const deviceFingerprint = await getDeviceFingerprint();
   const response = await fetch("/api/ip-limited/image-tasks/generations", {
     method: "POST",
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": deviceFingerprint,
     },
@@ -489,7 +523,10 @@ export async function createImageEditTask(
 
   const response = await fetch("/api/ip-limited/image-tasks/edits", {
     method: "POST",
+    cache: "no-store",
     headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": deviceFingerprint,
     },
@@ -516,6 +553,8 @@ export async function fetchImageTasks(ids: string[]) {
   const response = await fetch(`/api/ip-limited/image-tasks${params.toString() ? `?${params.toString()}` : ""}`, {
     cache: "no-store",
     headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
       Authorization: authKey ? `Bearer ${authKey}` : "",
       "X-Device-Fingerprint": await getDeviceFingerprint(),
     },
@@ -564,6 +603,13 @@ export async function fetchUserKeys() {
 
 export async function fetchWebUsers() {
   return httpRequest<{ items: WebUser[] }>("/api/web-users");
+}
+
+export async function updateWebUserQuota(userId: string, quotaLimit: number) {
+  return httpRequest<{ items: WebUser[] }>(`/api/web-users/${encodeURIComponent(userId)}/quota`, {
+    method: "POST",
+    body: { quota_limit: quotaLimit },
+  });
 }
 
 export async function createUserKey(name: string) {

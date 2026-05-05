@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { memo, useState, type CSSProperties } from "react";
 import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
 
+import { cn } from "@/lib/utils";
 import type { ImageConversation, ImageTurnStatus, StoredImage } from "@/store/image-conversations";
 
 export type ImageLightboxItem = {
@@ -23,7 +24,23 @@ function getStoredImageSrc(image: StoredImage) {
   if (image.b64_json) {
     return `data:image/png;base64,${image.b64_json}`;
   }
-  return image.url || "";
+  return withImageCacheKey(image.url || "", image.taskId || image.id);
+}
+
+function withImageCacheKey(url: string, cacheKey: string) {
+  if (!url || url.startsWith("data:") || url.startsWith("blob:")) {
+    return url;
+  }
+
+  try {
+    const baseUrl = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+    const parsedUrl = new URL(url, baseUrl);
+    parsedUrl.searchParams.set("_image", cacheKey);
+    return url.startsWith("/") ? `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}` : parsedUrl.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}_image=${encodeURIComponent(cacheKey)}`;
+  }
 }
 
 function getImageAspectStyle(size: string): CSSProperties {
@@ -75,13 +92,18 @@ function StoredImageElement({
   );
 }
 
-export function ImageResults({
+function ImageResultsComponent({
   selectedConversation,
   onOpenLightbox,
   onDeleteFailedImage,
   formatConversationTime,
 }: ImageResultsProps) {
   const [imageDimensions, setImageDimensions] = useState<Record<string, string>>({});
+  const [expandedPromptIds, setExpandedPromptIds] = useState<Record<string, boolean>>({});
+
+  const togglePromptExpanded = (id: string) => {
+    setExpandedPromptIds((current) => ({ ...current, [id]: !current[id] }));
+  };
 
   const updateImageDimensions = (id: string, width: number, height: number) => {
     const dimensions = formatImageDimensions(width, height);
@@ -121,6 +143,9 @@ export function ImageResults({
   return (
     <div className="mx-auto flex w-full max-w-[980px] flex-col gap-4 pb-1 sm:gap-8 sm:pb-0">
       {selectedConversation.turns.map((turn, turnIndex) => {
+        const hasPendingPreviousTurn = selectedConversation.turns
+          .slice(0, turnIndex)
+          .some((item) => item.status === "queued" || item.status === "generating");
         const successfulTurnImages = turn.images.flatMap((image) => {
           const src = image.status === "success" ? getStoredImageSrc(image) : "";
           return src
@@ -145,7 +170,16 @@ export function ImageResults({
                   <span>{getTurnStatusLabel(turn.status)}</span>
                   <span>{formatConversationTime(turn.createdAt)}</span>
                 </div>
-                <div className="break-words text-right">{turn.prompt}</div>
+                <button
+                  type="button"
+                  className={cn(
+                    "block w-full cursor-pointer break-words text-right sm:block",
+                    !expandedPromptIds[turn.id] && "image-mobile-text-clamp-3 sm:max-h-none sm:overflow-visible",
+                  )}
+                  onClick={() => togglePromptExpanded(turn.id)}
+                >
+                  {turn.prompt}
+                </button>
               </div>
             </div>
 
@@ -186,7 +220,7 @@ export function ImageResults({
                 <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 sm:mb-4 sm:gap-2 sm:text-xs">
                   <span className="rounded-full bg-stone-100 px-3 py-1">{turn.count} 张</span>
                   <span className="rounded-full bg-stone-100 px-3 py-1">{getTurnStatusLabel(turn.status)}</span>
-                  {turn.status === "queued" ? (
+                  {turn.status === "queued" && hasPendingPreviousTurn ? (
                     <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">等待当前对话中的前序任务完成</span>
                   ) : null}
                 </div>
@@ -224,18 +258,24 @@ export function ImageResults({
                               }}
                             />
                           </button>
-                          <div className="flex min-w-0 flex-1 flex-col justify-between px-3 py-2.5 sm:block sm:flex-none sm:py-3">
+                          <div className="flex min-w-0 flex-1 flex-col justify-between px-3 py-2.5 sm:flex sm:flex-none sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-0 sm:py-2">
                             <div className="min-w-0">
-                              <div className="text-sm font-medium text-stone-800 sm:text-xs sm:font-normal sm:text-stone-500">
+                              <div className="text-sm font-medium text-stone-800 sm:inline-flex sm:h-7 sm:items-center sm:rounded-full sm:bg-white/80 sm:px-2.5 sm:text-xs sm:font-medium sm:text-stone-700 sm:ring-1 sm:ring-stone-200/80">
                                 结果 {index + 1}
                               </div>
-                              <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500 sm:hidden">
+                              <button
+                                type="button"
+                                className={cn(
+                                  "mt-1 block w-full cursor-pointer break-words text-left text-xs leading-5 text-stone-500 sm:hidden",
+                                  !expandedPromptIds[`${turn.id}-${image.id}`] && "image-mobile-text-clamp-3",
+                                )}
+                                onClick={() => togglePromptExpanded(`${turn.id}-${image.id}`)}
+                              >
                                 {turn.prompt}
-                              </div>
+                              </button>
                             </div>
-                            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 sm:mt-0">
-                              <span className="hidden shrink-0 sm:inline">结果 {index + 1}</span>
-                              {imageMeta ? <span className="min-w-0 break-words text-stone-400">{imageMeta}</span> : null}
+                            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 sm:mt-0 sm:justify-end">
+                              {imageMeta ? <span className="min-w-0 break-words text-stone-400 sm:truncate">{imageMeta}</span> : null}
                             </div>
                           </div>
                         </div>
@@ -310,6 +350,8 @@ export function ImageResults({
     </div>
   );
 }
+
+export const ImageResults = memo(ImageResultsComponent);
 
 function getTurnStatusLabel(status: ImageTurnStatus) {
   if (status === "queued") {

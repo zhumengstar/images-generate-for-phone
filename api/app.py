@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from api import accounts, ai, image_tasks, register, system
 from api.support import client_public_ip, device_fingerprint, extract_bearer_token, ip_fingerprint_identity, ip_fingerprint_key, require_identity, resolve_web_asset, start_limited_account_watcher
 from services.config import DATA_DIR, config
+from services.web_user_service import web_user_service
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 GUEST_IMAGE_QUOTA_LIMIT = int(os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT", "5"))
@@ -44,6 +45,7 @@ IP_IMAGE_TASKS_LOCK = Lock()
 ACTIVE_IP_TASK_LOCK = Lock()
 ACTIVE_IP_TASKS: set[str] = set()
 ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
+MAX_OWNER_QUEUED_IMAGE_TASKS = 4
 
 
 def _now_iso() -> str:
@@ -88,18 +90,20 @@ def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, obj
                 "user_id": subject_id,
                 "name": identity.get("name") or subject_id,
                 "type": "user",
-                "limit": USER_IMAGE_QUOTA_LIMIT,
+                "limit": web_user_service.get_quota_limit(subject_id, USER_IMAGE_QUOTA_LIMIT),
                 "ip": ip,
                 "fingerprint": fingerprint,
             }
 
-    identity = ip_fingerprint_identity(request)
+    web_user_service.record_guest(ip, fingerprint)
+    guest_identity = web_user_service.get_guest_identity(fingerprint)
+    identity = guest_identity or ip_fingerprint_identity(request)
     return {
         "key": _quota_key(ip, fingerprint),
         "user_id": identity["id"],
         "name": identity.get("name") or identity["id"],
         "type": "guest",
-        "limit": GUEST_IMAGE_QUOTA_LIMIT,
+        "limit": web_user_service.get_guest_quota_limit(fingerprint, GUEST_IMAGE_QUOTA_LIMIT),
         "ip": ip,
         "fingerprint": fingerprint,
     }
@@ -157,9 +161,15 @@ def _consume_ip_quota(quota_key: str, limit: int, count: int) -> int:
         return max(0, limit - items[quota_key])
 
 
-def _refund_ip_quota(quota_key: str, count: int) -> None:
+def _refund_ip_quota(quota_key: str, count: int, quota_limit: int | None = None) -> None:
+    if quota_limit is not None and quota_limit < 0:
+        return
     if quota_key.startswith("admin|"):
         return
+    if quota_limit is None and quota_key.startswith("user|"):
+        user_id = quota_key.split("|", 2)[1] if "|" in quota_key else ""
+        if web_user_service.get_quota_limit(user_id, USER_IMAGE_QUOTA_LIMIT) < 0:
+            return
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
         items[quota_key] = max(0, int(items.get(quota_key, 0)) - count)
@@ -535,6 +545,25 @@ def _next_owner_ip_task(owner: str, exclude_task_key: str = "") -> tuple[str, di
     return queued[0]
 
 
+def _owner_queued_task_count(items: dict[str, dict[str, Any]], owner: str, exclude_task_key: str = "") -> int:
+    return sum(
+        1
+        for key, task in items.items()
+        if key != exclude_task_key
+        and task.get("owner") == owner
+        and task.get("status") == "queued"
+        and isinstance(task.get("work"), dict)
+    )
+
+
+def _ensure_owner_queue_capacity(items: dict[str, dict[str, Any]], owner: str, add_count: int = 1) -> None:
+    if _owner_queued_task_count(items, owner) + add_count > MAX_OWNER_QUEUED_IMAGE_TASKS:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": f"褰撳墠鏈€澶氬彧鑳芥帓闃?{MAX_OWNER_QUEUED_IMAGE_TASKS} 寮犲浘鐗囷紝璇风瓑寰呭墠闈㈢殑浠诲姟澶勭悊"},
+        )
+
+
 def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
     owner = str(task.get("owner") or "").strip()
     work = task.get("work") if isinstance(task.get("work"), dict) else {}
@@ -544,7 +573,7 @@ def _run_tracked_ip_image_task(task_key: str, task: dict[str, Any]) -> None:
             ip=str(task.get("ip") or "").strip(),
             fingerprint=str(task.get("fingerprint") or "").strip(),
             quota_key=str(task.get("quota_key") or task.get("owner") or "").strip(),
-            quota_limit=max(1, int(task.get("quota_limit") or USER_IMAGE_QUOTA_LIMIT)),
+            quota_limit=int(task.get("quota_limit") or USER_IMAGE_QUOTA_LIMIT),
             count=max(1, int(work.get("count") or 1)),
             mode=str(task.get("mode") or "generate"),
             payload=work.get("payload") if isinstance(work.get("payload"), dict) else None,
@@ -614,6 +643,16 @@ def _run_ip_image_task(
     files: list[tuple[str, str, str, bytes]] | None = None,
     headers: dict[str, str],
 ) -> None:
+    refunded_count = 0
+
+    def refund_once(refund_count: int) -> None:
+        nonlocal refunded_count
+        refund_count = max(0, min(int(refund_count), count - refunded_count))
+        if refund_count <= 0:
+            return
+        _refund_ip_quota(quota_key, refund_count, quota_limit)
+        refunded_count += refund_count
+
     _update_ip_task(task_key, status="running", error="")
     try:
         if mode == "edit":
@@ -621,25 +660,26 @@ def _run_ip_image_task(
         else:
             status, data = _proxy_image_generation(payload or {}, headers)
         if status >= 400:
-            _refund_ip_quota(quota_key, count)
+            refund_once(count)
             message = _error_text(data) if isinstance(data, dict) else ""
-            raise RuntimeError(message or f"图片生成失败 ({status})")
+            raise RuntimeError(message or f"鍥剧墖鐢熸垚澶辫触 ({status})")
         usable_count = _usable_image_count(data) if isinstance(data, dict) else 0
         if usable_count < count:
-            _refund_ip_quota(quota_key, count - usable_count)
+            refund_once(count - usable_count)
         if usable_count == 0:
-            raise RuntimeError("接口没有返回图片数据")
+            raise RuntimeError("鎺ュ彛娌℃湁杩斿洖鍥剧墖鏁版嵁")
         if isinstance(data, dict):
             data = _recall_image_data(data, headers)
         stable_count = _stable_image_count(data) if isinstance(data, dict) else 0
         if stable_count == 0:
-            _refund_ip_quota(quota_key, usable_count)
+            refund_once(usable_count)
             raise RuntimeError("image completed but image recall failed")
         if stable_count < usable_count:
-            _refund_ip_quota(quota_key, usable_count - stable_count)
+            refund_once(usable_count - stable_count)
         _update_ip_task(task_key, status="success", data=data.get("data", []), error="", work=None)
     except Exception as exc:
-        _update_ip_task(task_key, status="error", data=[], error=str(exc) or "图片生成失败", work=None)
+        refund_once(count)
+        _update_ip_task(task_key, status="error", data=[], error=str(exc) or "鍥剧墖鐢熸垚澶辫触", work=None)
 
 
 def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
@@ -675,34 +715,17 @@ def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) ->
 def _proxy_prompt_polish(prompt: str, mode: str, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
     base_url, model, api_key = _prompt_polish_settings()
     instruction = """
-你是专业的 AI 图片提示词设计师，负责把用户的简短想法改写成适合高质量图片生成或图片编辑的中文提示词。
-
-输出要求：
-1. 只输出最终提示词，不要标题、解释、编号、Markdown、引号。
-2. 保留用户原意，不添加会改变主体身份、产品、人物数量、品牌、文字内容或核心动作的设定。
-3. 提示词要具体、可执行，适合直接提交给图片生成模型。
-4. 优先补全：主体、场景、构图、景别、镜头语言、光线、色彩、材质、质感、风格、氛围、关键细节、画面清晰度。
-5. 避免空泛词堆叠，避免“最高质量、杰作、8K”等无意义堆料；可以使用自然的摄影、插画、设计语言。
-6. 如果用户明确要求文字、Logo、UI、商品、人物特征，要强调准确保留这些元素。
-7. 即使用户输入很短，也必须直接基于现有信息合理补全并输出可用提示词；禁止反问，禁止要求用户继续提供信息。
-
-推荐模板：
-主体/对象 + 关键特征 + 场景环境 + 构图和景别 + 光线和色彩 + 材质/质感 + 风格方向 + 需要避免的偏差。
-""".strip()
+浣犳槸涓撲笟鐨?AI 鍥剧墖鎻愮ず璇嶈璁″笀锛岃礋璐ｆ妸鐢ㄦ埛鐨勭畝鐭兂娉曟敼鍐欐垚閫傚悎楂樿川閲忓浘鐗囩敓鎴愭垨鍥剧墖缂栬緫鐨勪腑鏂囨彁绀鸿瘝銆?
+杈撳嚭瑕佹眰锛?1. 鍙緭鍑烘渶缁堟彁绀鸿瘝锛屼笉瑕佹爣棰樸€佽В閲娿€佺紪鍙枫€丮arkdown銆佸紩鍙枫€?2. 淇濈暀鐢ㄦ埛鍘熸剰锛屼笉娣诲姞浼氭敼鍙樹富浣撹韩浠姐€佷骇鍝併€佷汉鐗╂暟閲忋€佸搧鐗屻€佹枃瀛楀唴瀹规垨鏍稿績鍔ㄤ綔鐨勮瀹氥€?3. 鎻愮ず璇嶈鍏蜂綋銆佸彲鎵ц锛岄€傚悎鐩存帴鎻愪氦缁欏浘鐗囩敓鎴愭ā鍨嬨€?4. 浼樺厛琛ュ叏锛氫富浣撱€佸満鏅€佹瀯鍥俱€佹櫙鍒€侀暅澶磋瑷€銆佸厜绾裤€佽壊褰┿€佹潗璐ㄣ€佽川鎰熴€侀鏍笺€佹皼鍥淬€佸叧閿粏鑺傘€佺敾闈㈡竻鏅板害銆?5. 閬垮厤绌烘硾璇嶅爢鍙狅紝閬垮厤鈥滄渶楂樿川閲忋€佹澃浣溿€?K鈥濈瓑鏃犳剰涔夊爢鏂欙紱鍙互浣跨敤鑷劧鐨勬憚褰便€佹彃鐢汇€佽璁¤瑷€銆?6. 濡傛灉鐢ㄦ埛鏄庣‘瑕佹眰鏂囧瓧銆丩ogo銆乁I銆佸晢鍝併€佷汉鐗╃壒寰侊紝瑕佸己璋冨噯纭繚鐣欒繖浜涘厓绱犮€?7. 鍗充娇鐢ㄦ埛杈撳叆寰堢煭锛屼篃蹇呴』鐩存帴鍩轰簬鐜版湁淇℃伅鍚堢悊琛ュ叏骞惰緭鍑哄彲鐢ㄦ彁绀鸿瘝锛涚姝㈠弽闂紝绂佹瑕佹眰鐢ㄦ埛缁х画鎻愪緵淇℃伅銆?
+鎺ㄨ崘妯℃澘锛?涓讳綋/瀵硅薄 + 鍏抽敭鐗瑰緛 + 鍦烘櫙鐜 + 鏋勫浘鍜屾櫙鍒?+ 鍏夌嚎鍜岃壊褰?+ 鏉愯川/璐ㄦ劅 + 椋庢牸鏂瑰悜 + 闇€瑕侀伩鍏嶇殑鍋忓樊銆?""".strip()
     if mode == "edit":
         instruction += """
 
-当前是基于参考图的图片编辑任务。请额外遵守：
-1. 明确要求保留参考图的主体身份、姿态、构图、透视、比例、重要物体位置和整体风格。
-2. 清楚描述要修改、替换、增强或新增的部分。
-3. 不要要求模型重画整张图，除非用户原文明确要求。
-4. 输出应更像“编辑指令 + 视觉细节”，让模型知道哪些保持不变、哪些需要改变。
-""".rstrip()
+褰撳墠鏄熀浜庡弬鑰冨浘鐨勫浘鐗囩紪杈戜换鍔°€傝棰濆閬靛畧锛?1. 鏄庣‘瑕佹眰淇濈暀鍙傝€冨浘鐨勪富浣撹韩浠姐€佸Э鎬併€佹瀯鍥俱€侀€忚銆佹瘮渚嬨€侀噸瑕佺墿浣撲綅缃拰鏁翠綋椋庢牸銆?2. 娓呮鎻忚堪瑕佷慨鏀广€佹浛鎹€佸寮烘垨鏂板鐨勯儴鍒嗐€?3. 涓嶈瑕佹眰妯″瀷閲嶇敾鏁村紶鍥撅紝闄ら潪鐢ㄦ埛鍘熸枃鏄庣‘瑕佹眰銆?4. 杈撳嚭搴旀洿鍍忊€滅紪杈戞寚浠?+ 瑙嗚缁嗚妭鈥濓紝璁╂ā鍨嬬煡閬撳摢浜涗繚鎸佷笉鍙樸€佸摢浜涢渶瑕佹敼鍙樸€?""".rstrip()
     else:
         instruction += """
 
-当前是文生图任务。请把用户想法扩展为完整画面描述，重点提升主体可见性、构图稳定性、审美风格和最终出图可控性。
-""".rstrip()
+褰撳墠鏄枃鐢熷浘浠诲姟銆傝鎶婄敤鎴锋兂娉曟墿灞曚负瀹屾暣鐢婚潰鎻忚堪锛岄噸鐐规彁鍗囦富浣撳彲瑙佹€с€佹瀯鍥剧ǔ瀹氭€с€佸缇庨鏍煎拰鏈€缁堝嚭鍥惧彲鎺ф€с€?""".rstrip()
     payload = {
         "model": model,
         "messages": [
@@ -869,7 +892,7 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=status, content=data)
         polished = _chat_text_from_response(data) if isinstance(data, dict) else ""
         if not polished:
-            return JSONResponse(status_code=502, content={"error": "AI 没有返回润色结果"})
+            return JSONResponse(status_code=502, content={"error": "AI 娌℃湁杩斿洖娑﹁壊缁撴灉"})
         return {"text": polished, "model": _prompt_polish_settings()[1]}
 
     @app.get("/api/ip-limited/image-tasks")
@@ -955,6 +978,7 @@ def create_app() -> FastAPI:
                     _save_ip_tasks(items)
                 _ensure_ip_task_worker(task_key, existing)
                 return _public_ip_task(existing)
+            _ensure_owner_queue_capacity(items, owner)
             _consume_ip_quota(str(subject["key"]), int(subject["limit"]), 1)
             now = _now_iso()
             task = {
@@ -1055,6 +1079,7 @@ def create_app() -> FastAPI:
                     _save_ip_tasks(items)
                 _ensure_ip_task_worker(task_key, existing)
                 return _public_ip_task(existing)
+            _ensure_owner_queue_capacity(items, owner)
             _consume_ip_quota(str(subject["key"]), int(subject["limit"]), 1)
             now = _now_iso()
             task = {
@@ -1103,21 +1128,21 @@ def create_app() -> FastAPI:
         }
         status, data = _proxy_image_generation(payload, headers)
         if status >= 400:
-            _refund_ip_quota(str(subject["key"]), count)
+            _refund_ip_quota(str(subject["key"]), count, int(subject["limit"]))
             return JSONResponse(status_code=status, content=data)
         usable_count = _usable_image_count(data) if isinstance(data, dict) else 0
         if usable_count < count:
-            _refund_ip_quota(str(subject["key"]), count - usable_count)
+            _refund_ip_quota(str(subject["key"]), count - usable_count, int(subject["limit"]))
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片生成失败，接口没有返回图片数据"})
         if isinstance(data, dict):
             data = _recall_image_data(data, headers)
             stable_count = _stable_image_count(data)
             if stable_count == 0:
-                _refund_ip_quota(str(subject["key"]), usable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count, int(subject["limit"]))
                 return JSONResponse(status_code=502, content={"error": "image completed but image recall failed"})
             if stable_count < usable_count:
-                _refund_ip_quota(str(subject["key"]), usable_count - stable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count - stable_count, int(subject["limit"]))
             data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 
@@ -1156,21 +1181,21 @@ def create_app() -> FastAPI:
         }
         status, data = _proxy_image_edit(fields, files, headers)
         if status >= 400:
-            _refund_ip_quota(str(subject["key"]), count)
+            _refund_ip_quota(str(subject["key"]), count, int(subject["limit"]))
             return JSONResponse(status_code=status, content=data)
         usable_count = _usable_image_count(data) if isinstance(data, dict) else 0
         if usable_count < count:
-            _refund_ip_quota(str(subject["key"]), count - usable_count)
+            _refund_ip_quota(str(subject["key"]), count - usable_count, int(subject["limit"]))
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片编辑失败，接口没有返回图片数据"})
         if isinstance(data, dict):
             data = _recall_image_data(data, headers)
             stable_count = _stable_image_count(data)
             if stable_count == 0:
-                _refund_ip_quota(str(subject["key"]), usable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count, int(subject["limit"]))
                 return JSONResponse(status_code=502, content={"error": "image completed but image recall failed"})
             if stable_count < usable_count:
-                _refund_ip_quota(str(subject["key"]), usable_count - stable_count)
+                _refund_ip_quota(str(subject["key"]), usable_count - stable_count, int(subject["limit"]))
             data["ip_quota"] = _ip_quota_payload(request, ip, fingerprint)
         return JSONResponse(status_code=status, content=data)
 
@@ -1187,3 +1212,4 @@ def create_app() -> FastAPI:
         return FileResponse(fallback, headers=_web_asset_headers(fallback))
 
     return app
+

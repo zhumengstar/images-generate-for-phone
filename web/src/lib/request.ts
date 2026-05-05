@@ -68,7 +68,13 @@ function resolveApiBaseUrl() {
     try {
         const currentHost = window.location.hostname;
         const configuredUrl = new URL(configured, window.location.origin);
-        const isLocalPage = currentHost === "localhost" || currentHost === "127.0.0.1" || currentHost === "::1";
+        const isLocalPage =
+            currentHost === "localhost" ||
+            currentHost === "127.0.0.1" ||
+            currentHost === "::1" ||
+            currentHost.startsWith("192.168.") ||
+            currentHost.startsWith("10.") ||
+            /^172\.(1[6-9]|2\d|3[0-1])\./.test(currentHost);
         return isLocalPage || configuredUrl.host === window.location.host ? "" : configured;
     } catch {
         return "";
