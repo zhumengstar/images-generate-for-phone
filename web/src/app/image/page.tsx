@@ -54,6 +54,7 @@ const LEGACY_ACTIVE_CONVERSATION_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:i
 const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last_size`;
 const DEFAULT_IMAGE_SIZE = "1:1";
 const MOBILE_SHELL_TOP_HEIGHT = 48;
+const MOBILE_KEYBOARD_COMPOSER_CLEARANCE = 72;
 const DESKTOP_MAX_CONCURRENT_IMAGE_TASKS = 2;
 const MOBILE_MAX_CONCURRENT_IMAGE_TASKS = 1;
 const MAX_QUEUED_IMAGE_TASKS = 4;
@@ -713,6 +714,32 @@ function ImagePageContent() {
         (active instanceof HTMLElement && active.isContentEditable)
       );
     };
+    const applyKeyboardOffset = (offset: number, maxOffset: number) => {
+      const roundedOffset = Math.round(offset);
+      if (keyboardFrame) {
+        window.cancelAnimationFrame(keyboardFrame);
+      }
+      keyboardFrame = window.requestAnimationFrame(() => {
+        root.style.setProperty("--image-composer-keyboard-offset", `${roundedOffset}px`);
+        lastKeyboardOffset = roundedOffset;
+        keyboardFrame = window.requestAnimationFrame(() => {
+          const composer = document.querySelector<HTMLElement>(".image-mobile-composer");
+          const viewport = window.visualViewport;
+          const visibleBottom =
+            (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) - MOBILE_KEYBOARD_COMPOSER_CLEARANCE;
+          const composerBottom = composer?.getBoundingClientRect().bottom || 0;
+          const overflow = Math.ceil(composerBottom - visibleBottom + 12);
+          if (overflow > 2) {
+            const correctedOffset = Math.min(maxOffset, roundedOffset + overflow);
+            if (Math.abs(correctedOffset - lastKeyboardOffset) >= 2) {
+              root.style.setProperty("--image-composer-keyboard-offset", `${correctedOffset}px`);
+              lastKeyboardOffset = correctedOffset;
+            }
+          }
+          keyboardFrame = 0;
+        });
+      });
+    };
 
     const lockMobilePage = () => {
       if (!isMobile()) {
@@ -756,16 +783,10 @@ function ImagePageContent() {
       root.classList.add("image-keyboard-active");
       const roundedOffset = Math.round(keyboardOffset);
       if (Math.abs(roundedOffset - lastKeyboardOffset) < 2) {
+        applyKeyboardOffset(lastKeyboardOffset, maxReasonableOffset);
         return;
       }
-      lastKeyboardOffset = roundedOffset;
-      if (keyboardFrame) {
-        window.cancelAnimationFrame(keyboardFrame);
-      }
-      keyboardFrame = window.requestAnimationFrame(() => {
-        root.style.setProperty("--image-composer-keyboard-offset", `${roundedOffset}px`);
-        keyboardFrame = 0;
-      });
+      applyKeyboardOffset(roundedOffset, maxReasonableOffset);
     };
 
     try {

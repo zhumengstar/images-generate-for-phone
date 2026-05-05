@@ -126,7 +126,7 @@ export function TopNav() {
       const result = await createImageShareLink();
       const url = new URL(result.share_path, window.location.origin).toString();
       await copyTextToClipboard(url);
-      toast.success("分享链接已复制，其他设备打开后可为你增加 1 次额度");
+      toast.success("分享链接已复制，每个不同用户首次点击都会为你增加 1 次额度");
     } catch (error) {
       const message = error instanceof Error ? error.message : "创建分享链接失败";
       toast.error(message);
@@ -194,7 +194,7 @@ export function TopNav() {
             </div>
             <div className="flex min-w-0 shrink-0 items-center gap-1.5">
               <span className="hidden max-w-[128px] truncate text-[11px] font-medium text-stone-500 min-[390px]:inline sm:max-w-none sm:text-xs">
-                分享得 1 次额度
+                不同用户点击 +1
               </span>
               <button
                 type="button"
