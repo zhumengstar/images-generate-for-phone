@@ -59,7 +59,7 @@ IMAGE_PROMPT_SAFETY_SYSTEM_PROMPT = """
 3. 赌博、毒品、诈骗、黑客攻击、非法交易、规避监管、侵犯隐私或个人信息滥用。
 4. 仇恨、歧视、骚扰、人身攻击、血腥暴力、自残自杀引导。
 5. 现实政治敏感事件、敏感人物、敏感组织、敏感标识或可能引发公共风险的内容。
-任务可以先进入等待队列；命中时不要调用图片生成接口、不要返回图片，只返回中文提示：
+任务可以先进入等待队列并执行图片生成；命中时不要把图片返回给用户，只返回中文提示：
 “当前提示词包含违法违规或敏感内容，无法生成图片。请修改为合法、健康、非敏感的描述后再提交。”
 """.strip()
 
@@ -701,13 +701,32 @@ def _run_ip_image_task(
     _update_ip_task(task_key, status="running", error="")
     try:
         task_prompt = str((fields or {}).get("prompt") or (payload or {}).get("prompt") or "")
+        proxy_done = Event()
+        proxy_result: dict[str, Any] = {}
+
+        def run_proxy_request() -> None:
+            try:
+                if mode == "edit":
+                    proxy_status, proxy_data = _proxy_image_edit(fields or {}, files or [], headers)
+                else:
+                    proxy_status, proxy_data = _proxy_image_generation(payload or {}, headers)
+                proxy_result["status"] = proxy_status
+                proxy_result["data"] = proxy_data
+            except Exception as proxy_exc:
+                proxy_result["error"] = proxy_exc
+            finally:
+                proxy_done.set()
+
+        Thread(target=run_proxy_request, daemon=True, name=f"ip-image-proxy-{task_key[-16:]}").start()
         if _image_prompt_safety_violation(task_prompt):
             refund_once(count)
             raise RuntimeError(IMAGE_PROMPT_SAFETY_NOTICE)
-        if mode == "edit":
-            status, data = _proxy_image_edit(fields or {}, files or [], headers)
-        else:
-            status, data = _proxy_image_generation(payload or {}, headers)
+
+        proxy_done.wait()
+        if isinstance(proxy_result.get("error"), Exception):
+            raise proxy_result["error"]
+        status = int(proxy_result.get("status") or 500)
+        data = proxy_result.get("data") if isinstance(proxy_result.get("data"), dict) else {}
         if status >= 400:
             refund_once(count)
             message = _error_text(data) if isinstance(data, dict) else ""
