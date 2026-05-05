@@ -167,7 +167,7 @@ export function TopNav() {
         </div>
         {isImagePagePath ? (
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
-            <div className="grid grid-cols-2 gap-1 rounded-full bg-stone-100 p-1">
+            <div className="hidden grid-cols-2 gap-1 rounded-full bg-stone-100 p-1 sm:grid">
               <button
                 type="button"
                 className={cn(

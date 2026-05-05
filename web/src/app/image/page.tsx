@@ -582,6 +582,7 @@ function ImagePageContent() {
     [conversations, selectedConversationId],
   );
   const deferredSelectedConversation = useDeferredValue(selectedConversation);
+  const currentImageModeLabel = referenceImages.length > 0 ? "图片编辑" : "文生图";
   const taskStats = useMemo(
     () => getImageTaskStats(conversations),
     [conversations],
@@ -1846,7 +1847,10 @@ function ImagePageContent() {
           <section className="sticky top-0 z-40 shrink-0 bg-stone-50 sm:bg-transparent lg:hidden" aria-label="页面信息">
             {isTopInfoCollapsed ? (
               <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden border-b border-stone-200/70 bg-white px-3 text-[11px] text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4">
-                <span className="grid min-w-0 grid-cols-[auto_minmax(0,42vw)] items-center gap-1.5">
+                <span className="grid min-w-0 grid-cols-[auto_auto_minmax(0,34vw)] items-center gap-1.5">
+                  <span className="inline-flex h-7 shrink-0 items-center rounded-full bg-stone-100 px-2.5 font-semibold text-stone-700">
+                    {currentImageModeLabel}
+                  </span>
                   <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 text-white">
                     <span className="font-medium">剩余额度</span>
                     <span className="font-mono">{formatIpQuota(ipQuota)}</span>
@@ -1869,7 +1873,10 @@ function ImagePageContent() {
             ) : (
               <>
                 <div className="grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden border-b border-stone-200/70 bg-white px-3 text-[11px] leading-5 text-stone-500 sm:rounded-2xl sm:border sm:bg-white/85 sm:px-4 sm:text-xs">
-                  <div className="grid min-w-0 grid-cols-[auto_minmax(0,42vw)] items-center gap-1.5 overflow-hidden">
+                  <div className="grid min-w-0 grid-cols-[auto_auto_minmax(0,34vw)] items-center gap-1.5 overflow-hidden">
+                    <span className="inline-flex h-7 shrink-0 items-center rounded-full bg-stone-100 px-2.5 font-semibold text-stone-700">
+                      {currentImageModeLabel}
+                    </span>
                     <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full bg-stone-950 px-2.5 text-white">
                       <span className="font-medium">剩余额度</span>
                       <span className="font-mono">{formatIpQuota(ipQuota)}</span>
