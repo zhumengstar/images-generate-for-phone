@@ -245,9 +245,12 @@ async function readStoredImageConversations(): Promise<ImageConversation[]> {
     )) || [];
   const normalizedLegacyItems = legacyItems.map(normalizeConversation);
   if (normalizedLegacyItems.length > 0) {
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, normalizedLegacyItems);
+    await imageConversationStorage.setItem(
+      IMAGE_CONVERSATIONS_KEY,
+      compactImageConversationsForStorage(normalizedLegacyItems),
+    );
   }
-  return normalizedLegacyItems;
+  return compactImageConversationsForStorage(normalizedLegacyItems);
 }
 
 export async function listImageConversations(): Promise<ImageConversation[]> {

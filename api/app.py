@@ -34,7 +34,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 IMAGE_PROXY_BASE_URL = os.getenv("IMAGE_PROXY_BASE_URL", "https://generate.muling.store").rstrip("/")
 IMAGE_PROXY_TIMEOUT = int(os.getenv("IMAGE_PROXY_TIMEOUT", "240"))
 IMAGE_PROXY_RETRIES = int(os.getenv("IMAGE_PROXY_RETRIES", "2"))
+IMAGE_PROXY_MAX_JSON_BYTES = int(os.getenv("IMAGE_PROXY_MAX_JSON_BYTES", str(32 * 1024 * 1024)))
 IMAGE_EDIT_MAX_SIDE = int(os.getenv("IMAGE_PROXY_EDIT_MAX_SIDE", "2048"))
+IMAGE_EDIT_MAX_UPLOADS = int(os.getenv("IMAGE_PROXY_EDIT_MAX_UPLOADS", "4"))
+IMAGE_EDIT_MAX_UPLOAD_BYTES = int(os.getenv("IMAGE_PROXY_EDIT_MAX_UPLOAD_BYTES", str(12 * 1024 * 1024)))
 PROMPT_POLISH_BASE_URL = os.getenv("IMAGE_PROMPT_POLISH_BASE_URL", f"{IMAGE_PROXY_BASE_URL}/v1").rstrip("/")
 PROMPT_POLISH_MODEL = os.getenv("IMAGE_PROMPT_POLISH_MODEL", "gpt-5.5")
 PROMPT_POLISH_API_KEY = os.getenv("IMAGE_PROMPT_POLISH_API_KEY", "")
@@ -51,6 +54,8 @@ ACTIVE_IP_TASKS: set[str] = set()
 ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
 MAX_OWNER_QUEUED_IMAGE_TASKS = 4
 IP_IMAGE_TASK_HISTORY_LIMIT = int(os.getenv("IP_IMAGE_TASK_HISTORY_LIMIT", "120"))
+IP_IMAGE_TASKS_MAX_BYTES = int(os.getenv("IP_IMAGE_TASKS_MAX_BYTES", str(8 * 1024 * 1024)))
+IMAGE_SHARE_REWARD_LIMIT = int(os.getenv("IMAGE_SHARE_REWARD_LIMIT", "1000"))
 
 
 def _guest_image_quota_limit() -> int:
@@ -248,11 +253,28 @@ def _load_share_rewards() -> dict[str, dict[str, Any]]:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+    items = {str(key): value for key, value in data.items() if isinstance(value, dict)}
+    if len(items) <= IMAGE_SHARE_REWARD_LIMIT:
+        return items
+    return dict(
+        sorted(
+            items.items(),
+            key=lambda entry: str(entry[1].get("last_redeemed_at") or entry[1].get("created_at") or ""),
+            reverse=True,
+        )[:IMAGE_SHARE_REWARD_LIMIT]
+    )
 
 
 def _save_share_rewards(items: dict[str, dict[str, Any]]) -> None:
     IMAGE_SHARE_REWARDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if len(items) > IMAGE_SHARE_REWARD_LIMIT:
+        items = dict(
+            sorted(
+                items.items(),
+                key=lambda entry: str(entry[1].get("last_redeemed_at") or entry[1].get("created_at") or ""),
+                reverse=True,
+            )[:IMAGE_SHARE_REWARD_LIMIT]
+        )
     IMAGE_SHARE_REWARDS_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -426,6 +448,20 @@ def _decode_proxy_body(raw_body: bytes) -> dict[str, Any]:
     return data if isinstance(data, dict) else {"error": response_body}
 
 
+def _read_limited_response(response: Any, limit: int = IMAGE_PROXY_MAX_JSON_BYTES) -> bytes:
+    output = BytesIO()
+    total = 0
+    while True:
+        chunk = response.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if limit > 0 and total > limit:
+            raise ValueError(f"proxy response is too large ({total} bytes)")
+        output.write(chunk)
+    return output.getvalue()
+
+
 def _chat_text_from_response(data: dict[str, Any]) -> str:
     choices = data.get("choices")
     if isinstance(choices, list) and choices:
@@ -508,14 +544,20 @@ def _normalize_edit_image(file_name: str, content_type: str, content: bytes) -> 
 
 
 async def _read_edit_uploads(image: list[UploadFile]) -> list[tuple[str, str, str, bytes]]:
+    if len(image) > IMAGE_EDIT_MAX_UPLOADS:
+        raise HTTPException(status_code=400, detail={"error": f"最多只能上传 {IMAGE_EDIT_MAX_UPLOADS} 张参考图"})
     files: list[tuple[str, str, str, bytes]] = []
     for upload in image:
         file_name = upload.filename or "image.png"
         content_type = upload.content_type or "image/png"
+        content = await upload.read()
+        if IMAGE_EDIT_MAX_UPLOAD_BYTES > 0 and len(content) > IMAGE_EDIT_MAX_UPLOAD_BYTES:
+            max_mb = max(1, IMAGE_EDIT_MAX_UPLOAD_BYTES // (1024 * 1024))
+            raise HTTPException(status_code=400, detail={"error": f"单张参考图不能超过 {max_mb}MB"})
         normalized_name, normalized_type, normalized_content = _normalize_edit_image(
             file_name,
             content_type,
-            await upload.read(),
+            content,
         )
         files.append(("image", normalized_name, normalized_type, normalized_content))
     return files
@@ -603,6 +645,16 @@ def _decode_task_files(items: Any) -> list[tuple[str, str, str, bytes]]:
 
 
 def _load_ip_tasks() -> dict[str, dict[str, Any]]:
+    try:
+        if IP_IMAGE_TASKS_PATH.exists() and IP_IMAGE_TASKS_MAX_BYTES > 0 and IP_IMAGE_TASKS_PATH.stat().st_size > IP_IMAGE_TASKS_MAX_BYTES:
+            backup_path = IP_IMAGE_TASKS_PATH.with_name(
+                f"{IP_IMAGE_TASKS_PATH.name}.oversize-{int(time.time())}.bak"
+            )
+            os.replace(IP_IMAGE_TASKS_PATH, backup_path)
+            _save_ip_tasks({})
+            return {}
+    except Exception:
+        return {}
     try:
         data = json.loads(IP_IMAGE_TASKS_PATH.read_text(encoding="utf-8"))
     except Exception:
@@ -901,13 +953,18 @@ def _proxy_image_generation(payload: dict[str, Any], headers: dict[str, str]) ->
         )
         try:
             with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
-                return response.status, _decode_proxy_body(response.read())
+                return response.status, _decode_proxy_body(_read_limited_response(response))
         except urllib.error.HTTPError as exc:
-            data = _decode_proxy_body(exc.read())
+            try:
+                data = _decode_proxy_body(_read_limited_response(exc))
+            except ValueError as read_exc:
+                return 502, {"error": str(read_exc)}
             if attempt < IMAGE_PROXY_RETRIES and _should_retry_proxy_error(exc.code):
                 time.sleep(1 + attempt)
                 continue
             return exc.code, data
+        except ValueError as exc:
+            return 502, {"error": str(exc)}
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             if attempt < IMAGE_PROXY_RETRIES:
                 time.sleep(1 + attempt)
@@ -955,13 +1012,18 @@ def _proxy_prompt_polish(prompt: str, mode: str, headers: dict[str, str]) -> tup
     )
     try:
         with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
-            data = _decode_proxy_body(response.read())
+            data = _decode_proxy_body(_read_limited_response(response))
             text = _chat_text_from_response(data)
             if text:
                 data["text"] = text
             return response.status, data
     except urllib.error.HTTPError as exc:
-        return exc.code, _decode_proxy_body(exc.read())
+        try:
+            return exc.code, _decode_proxy_body(_read_limited_response(exc))
+        except ValueError as read_exc:
+            return 502, {"error": str(read_exc)}
+    except ValueError as exc:
+        return 502, {"error": str(exc)}
     except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
         return 502, {"error": f"prompt polish request failed: {_proxy_error_message(exc)}"}
 
@@ -1012,13 +1074,18 @@ def _proxy_image_edit(fields: dict[str, str], files: list[tuple[str, str, str, b
         )
         try:
             with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
-                return response.status, _decode_proxy_body(response.read())
+                return response.status, _decode_proxy_body(_read_limited_response(response))
         except urllib.error.HTTPError as exc:
-            data = _decode_proxy_body(exc.read())
+            try:
+                data = _decode_proxy_body(_read_limited_response(exc))
+            except ValueError as read_exc:
+                return 502, {"error": str(read_exc)}
             if attempt < IMAGE_PROXY_RETRIES and _should_retry_proxy_error(exc.code):
                 time.sleep(1 + attempt)
                 continue
             return exc.code, data
+        except ValueError as exc:
+            return 502, {"error": str(exc)}
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             if attempt < IMAGE_PROXY_RETRIES:
                 time.sleep(1 + attempt)
