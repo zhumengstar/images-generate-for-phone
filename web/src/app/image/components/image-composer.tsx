@@ -763,14 +763,14 @@ export function ImageComposer({
                       }
                     }}
                   >
-                    <div className="relative flex h-9 min-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] min-[390px]:min-w-[148px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px] lg:px-4">
+                    <div className="relative flex h-9 w-fit shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px] lg:px-4">
                       <span className="shrink-0 whitespace-nowrap font-medium text-stone-700 sm:text-sm">比例</span>
                       <PopoverPrimitive.Trigger asChild>
                         <button
                           type="button"
-                          className="flex h-7 min-w-0 flex-1 items-center justify-between gap-1 bg-transparent text-left text-[11px] font-bold text-stone-700 sm:h-8 sm:w-[132px] sm:flex-none sm:text-xs"
+                          className="flex h-7 w-fit min-w-[56px] items-center justify-between gap-1.5 bg-transparent text-left text-[11px] font-bold text-stone-700 sm:h-8 sm:min-w-[96px] sm:text-xs"
                         >
-                          <span className="min-w-0 flex-1 truncate">
+                          <span className="min-w-0 max-w-[72px] truncate min-[390px]:max-w-[92px] sm:max-w-[118px]">
                             <span>{imageSizeValueLabel}</span>
                             {selectedSizeOption.description ? (
                               <span className="hidden sm:inline"> {selectedSizeOption.description}</span>
@@ -787,7 +787,7 @@ export function ImageComposer({
                         sideOffset={18}
                         collisionPadding={{ top: 12, right: 12, bottom: 28, left: 12 }}
                         className={cn(
-                          "z-[100] max-h-[min(36dvh,300px)] w-[min(calc(100vw-2rem),280px)] overflow-hidden rounded-2xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)] sm:max-h-[min(48dvh,420px)] sm:w-[380px] sm:rounded-3xl",
+                          "z-[100] max-h-[min(36dvh,300px)] w-[min(calc(100vw-2rem),244px)] overflow-hidden rounded-2xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)] sm:max-h-[min(48dvh,420px)] sm:w-[380px] sm:rounded-3xl",
                           isComposerCollapsed && "sm:hidden",
                         )}
                         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -801,7 +801,7 @@ export function ImageComposer({
                                   key={option.label}
                                   type="button"
                                   className={cn(
-                                    "grid h-11 w-full grid-cols-[minmax(0,1fr)_40px_18px] items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-stone-700 transition hover:bg-stone-100 sm:flex sm:h-auto sm:justify-between sm:rounded-2xl",
+                                    "grid h-11 w-full grid-cols-[minmax(0,1fr)_34px_18px] items-center gap-1.5 rounded-xl px-2.5 py-2 text-left text-sm text-stone-700 transition hover:bg-stone-100 sm:flex sm:h-auto sm:justify-between sm:rounded-2xl sm:px-3",
                                     active && "bg-stone-100 font-medium text-stone-950",
                                   )}
                                   onMouseEnter={() => setHoveredSizeValue(option.value)}
@@ -813,7 +813,7 @@ export function ImageComposer({
                                   }}
                                 >
                                   <span className="min-w-0 truncate sm:flex-1 sm:pr-2">{option.label}</span>
-                                  <span className="flex h-7 w-10 shrink-0 items-center justify-center rounded-lg border border-stone-200 bg-white shadow-inner" aria-hidden="true">
+                                  <span className="flex h-7 w-[34px] shrink-0 items-center justify-center rounded-lg border border-stone-200 bg-white shadow-inner sm:w-10" aria-hidden="true">
                                     <span
                                       className="rounded-[3px] border border-stone-400 bg-stone-100"
                                       style={getAspectThumbnailStyle(option.value)}
