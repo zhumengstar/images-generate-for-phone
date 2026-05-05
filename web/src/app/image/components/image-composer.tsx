@@ -784,16 +784,16 @@ export function ImageComposer({
                       <PopoverPrimitive.Content
                         side="top"
                         align="center"
-                        sideOffset={10}
-                        collisionPadding={12}
+                        sideOffset={18}
+                        collisionPadding={{ top: 12, right: 12, bottom: 28, left: 12 }}
                         className={cn(
-                          "z-[100] max-h-[min(42dvh,340px)] w-[min(calc(100vw-2rem),260px)] overflow-hidden rounded-2xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)] sm:max-h-[min(48dvh,420px)] sm:w-[380px] sm:rounded-3xl",
+                          "z-[100] max-h-[min(36dvh,300px)] w-[min(calc(100vw-2rem),280px)] overflow-hidden rounded-2xl border border-white/80 bg-white p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)] sm:max-h-[min(48dvh,420px)] sm:w-[380px] sm:rounded-3xl",
                           isComposerCollapsed && "sm:hidden",
                         )}
                         onOpenAutoFocus={(event) => event.preventDefault()}
                       >
                         <div className="sm:grid sm:grid-cols-[178px_minmax(0,1fr)] sm:gap-2">
-                          <div className="max-h-[min(42dvh,324px)] overflow-y-auto pr-0 sm:max-h-[min(48dvh,404px)] sm:pr-1">
+                          <div className="max-h-[min(36dvh,284px)] overflow-y-auto pr-0 pb-2 sm:max-h-[min(48dvh,404px)] sm:pr-1 sm:pb-0">
                             {imageSizeOptions.map((option) => {
                               const active = option.value === imageSize;
                               return (
@@ -824,14 +824,14 @@ export function ImageComposer({
                                 );
                               })}
                               <form
-                                className="mt-2 border-t border-stone-100 pt-2 sm:hidden"
+                                className="sticky bottom-0 mt-2 border-t border-stone-100 bg-white pt-2 pb-1 sm:hidden"
                                 onSubmit={(event) => {
                                   event.preventDefault();
                                   applyCustomAspectRatio();
                                 }}
                               >
                                 <div className="mb-1 px-2 text-xs font-medium text-stone-500">自定义比例</div>
-                                <div className="flex gap-2">
+                                <div className="flex items-center gap-2">
                                   <Input
                                     value={customAspectInput}
                                     onChange={(event) => {
@@ -841,11 +841,11 @@ export function ImageComposer({
                                       setHoveredSizeValue(normalized || null);
                                     }}
                                     placeholder="7:5"
-                                    className="h-9 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
+                                    className="h-10 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
                                   />
                                   <button
                                     type="submit"
-                                    className="h-9 shrink-0 rounded-xl bg-stone-950 px-3 text-xs font-medium text-white transition hover:bg-stone-800"
+                                    className="h-10 shrink-0 rounded-xl bg-stone-950 px-3 text-xs font-medium text-white transition hover:bg-stone-800"
                                   >
                                     应用
                                   </button>
