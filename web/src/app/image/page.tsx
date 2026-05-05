@@ -55,6 +55,7 @@ const LEGACY_IMAGE_SIZE_STORAGE_KEY = `${LEGACY_IMAGE_STORAGE_PREFIX}:image_last
 const DEFAULT_IMAGE_SIZE = "1:1";
 const MOBILE_SHELL_TOP_HEIGHT = 48;
 const MOBILE_KEYBOARD_COMPOSER_CLEARANCE = 72;
+const MOBILE_COMPOSER_MIN_TOP = 8;
 const DESKTOP_MAX_CONCURRENT_IMAGE_TASKS = 2;
 const MOBILE_MAX_CONCURRENT_IMAGE_TASKS = 1;
 const MAX_QUEUED_IMAGE_TASKS = 4;
@@ -714,8 +715,16 @@ function ImagePageContent() {
         (active instanceof HTMLElement && active.isContentEditable)
       );
     };
+    const clampComposerOffset = (offset: number, maxOffset: number) => {
+      const composer = document.querySelector<HTMLElement>(".image-mobile-composer");
+      const composerHeight = composer?.getBoundingClientRect().height || 0;
+      const topSafeOffset = composerHeight
+        ? Math.max(0, Math.round(window.innerHeight - composerHeight - MOBILE_COMPOSER_MIN_TOP))
+        : maxOffset;
+      return Math.max(0, Math.min(Math.round(offset), maxOffset, topSafeOffset));
+    };
     const applyKeyboardOffset = (offset: number, maxOffset: number, keyboardVisible: boolean) => {
-      const roundedOffset = Math.round(offset);
+      const roundedOffset = clampComposerOffset(offset, maxOffset);
       if (keyboardFrame) {
         window.cancelAnimationFrame(keyboardFrame);
       }
@@ -734,7 +743,7 @@ function ImagePageContent() {
           const composerBottom = composer?.getBoundingClientRect().bottom || 0;
           const overflow = Math.ceil(composerBottom - visibleBottom + 12);
           if (overflow > 2) {
-            const correctedOffset = Math.min(maxOffset, roundedOffset + overflow);
+            const correctedOffset = clampComposerOffset(roundedOffset + overflow, maxOffset);
             if (Math.abs(correctedOffset - lastKeyboardOffset) >= 2) {
               root.style.setProperty("--image-composer-keyboard-offset", `${correctedOffset}px`);
               lastKeyboardOffset = correctedOffset;
