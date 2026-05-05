@@ -126,10 +126,16 @@ export function TopNav() {
       const result = await createImageShareLink();
       const url = new URL(result.share_path, window.location.origin).toString();
       await copyTextToClipboard(url);
-      toast.success("分享链接已复制，每个不同用户首次点击都会为你增加 1 次额度");
+      toast.success("分享链接已复制，不同用户首次点击 +1 次额度", {
+        id: "image-share-link",
+        duration: 1200,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "创建分享链接失败";
-      toast.error(message);
+      toast.error(message, {
+        id: "image-share-link",
+        duration: 1600,
+      });
     } finally {
       setIsCreatingShareLink(false);
     }
