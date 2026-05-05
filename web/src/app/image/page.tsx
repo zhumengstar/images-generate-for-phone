@@ -544,6 +544,26 @@ function ImagePageContent() {
       behavior,
     });
   }, []);
+  const scheduleScrollResultsToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      const timers: number[] = [];
+      let animationFrame = 0;
+
+      scrollResultsToBottom(behavior);
+      animationFrame = window.requestAnimationFrame(() => scrollResultsToBottom("auto"));
+      [80, 220, 520, 1000].forEach((delay) => {
+        timers.push(window.setTimeout(() => scrollResultsToBottom("auto"), delay));
+      });
+
+      return () => {
+        if (animationFrame) {
+          window.cancelAnimationFrame(animationFrame);
+        }
+        timers.forEach((timer) => window.clearTimeout(timer));
+      };
+    },
+    [scrollResultsToBottom],
+  );
   const deleteConfirmTitle = deleteConfirm?.type === "all" ? "清空历史记录" : deleteConfirm?.type === "one" ? "删除对话" : "";
   const deleteConfirmDescription =
     deleteConfirm?.type === "all"
@@ -608,8 +628,12 @@ function ImagePageContent() {
       root.classList.add("image-mobile-lock");
       body.classList.add("image-mobile-lock");
       if (!isTextInputFocused()) {
-        baselineHeight = Math.max(window.innerHeight, window.visualViewport?.height || 0, baselineHeight);
-        const nextShellHeight = Math.max(360, window.innerHeight - MOBILE_SHELL_TOP_HEIGHT);
+        const visibleHeight = Math.max(
+          window.innerHeight,
+          (window.visualViewport?.height || 0) + (window.visualViewport?.offsetTop || 0),
+        );
+        baselineHeight = Math.max(visibleHeight, baselineHeight);
+        const nextShellHeight = Math.max(360, Math.round(visibleHeight - MOBILE_SHELL_TOP_HEIGHT));
         if (mobileShellHeightRef.current !== nextShellHeight) {
           mobileShellHeightRef.current = nextShellHeight;
           setMobileShellHeight(nextShellHeight);
@@ -658,7 +682,10 @@ function ImagePageContent() {
 
     window.addEventListener("resize", lockMobilePage);
     window.addEventListener("orientationchange", lockMobilePage);
+    window.addEventListener("pageshow", lockMobilePage);
+    window.addEventListener("focus", lockMobilePage);
     window.visualViewport?.addEventListener("resize", lockMobilePage);
+    document.addEventListener("visibilitychange", lockMobilePage);
     document.addEventListener("focusin", handleFocusIn, true);
     document.addEventListener("focusout", handleFocusOut, true);
     return () => {
@@ -670,7 +697,10 @@ function ImagePageContent() {
       }
       window.removeEventListener("resize", lockMobilePage);
       window.removeEventListener("orientationchange", lockMobilePage);
+      window.removeEventListener("pageshow", lockMobilePage);
+      window.removeEventListener("focus", lockMobilePage);
       window.visualViewport?.removeEventListener("resize", lockMobilePage);
+      document.removeEventListener("visibilitychange", lockMobilePage);
       document.removeEventListener("focusin", handleFocusIn, true);
       document.removeEventListener("focusout", handleFocusOut, true);
     };
@@ -769,28 +799,44 @@ function ImagePageContent() {
     }
 
     const behavior: ScrollBehavior = isLoadingHistory ? "auto" : "smooth";
-    let animationFrame = 0;
-    const timers: number[] = [];
-
-    scrollResultsToBottom(behavior);
-    animationFrame = window.requestAnimationFrame(() => scrollResultsToBottom("auto"));
-    [80, 220, 520, 1000].forEach((delay) => {
-      timers.push(window.setTimeout(() => scrollResultsToBottom("auto"), delay));
-    });
-
-    return () => {
-      if (animationFrame) {
-        window.cancelAnimationFrame(animationFrame);
-      }
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
+    return scheduleScrollResultsToBottom(behavior);
   }, [
     isLoadingHistory,
-    scrollResultsToBottom,
+    scheduleScrollResultsToBottom,
     selectedConversation,
     selectedConversation?.turns.length,
     selectedConversation?.updatedAt,
   ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let cleanupScroll: (() => void) | undefined;
+    const restoreBottomPosition = () => {
+      if (!selectedConversationId) {
+        return;
+      }
+      cleanupScroll?.();
+      cleanupScroll = scheduleScrollResultsToBottom("auto");
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        restoreBottomPosition();
+      }
+    };
+
+    window.addEventListener("pageshow", restoreBottomPosition);
+    window.addEventListener("focus", restoreBottomPosition);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cleanupScroll?.();
+      window.removeEventListener("pageshow", restoreBottomPosition);
+      window.removeEventListener("focus", restoreBottomPosition);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [scheduleScrollResultsToBottom, selectedConversationId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
