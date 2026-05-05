@@ -791,6 +791,12 @@ export function ImageComposer({
                           isComposerCollapsed && "sm:hidden",
                         )}
                         onOpenAutoFocus={(event) => event.preventDefault()}
+                        onPointerDownOutside={(event) => {
+                          const target = event.target as HTMLElement | null;
+                          if (target?.closest("[data-custom-aspect-input]")) {
+                            event.preventDefault();
+                          }
+                        }}
                       >
                         <div className="sm:grid sm:grid-cols-[178px_minmax(0,1fr)] sm:gap-2">
                           <div className="max-h-[min(36dvh,284px)] overflow-y-auto pr-0 pb-2 sm:max-h-[min(48dvh,404px)] sm:pr-1 sm:pb-0">
@@ -825,8 +831,6 @@ export function ImageComposer({
                               })}
                               <form
                                 className="sticky bottom-0 mt-2 border-t border-stone-100 bg-white pt-2 pb-1 sm:hidden"
-                                onClick={(event) => event.stopPropagation()}
-                                onPointerDown={(event) => event.stopPropagation()}
                                 onSubmit={(event) => {
                                   event.preventDefault();
                                   event.stopPropagation();
@@ -836,6 +840,7 @@ export function ImageComposer({
                                 <div className="mb-1 px-2 text-xs font-medium text-stone-500">自定义比例</div>
                                 <div className="flex items-center gap-2">
                                   <Input
+                                    data-custom-aspect-input
                                     value={customAspectInput}
                                     inputMode="decimal"
                                     onChange={(event) => {
