@@ -29,6 +29,19 @@ type ImageComposerProps = {
 };
 
 const COMPOSER_COLLAPSED_STORAGE_KEY = "images-generate:image-composer-collapsed";
+const FIXED_IMAGE_SIZE_OPTIONS = [
+  { value: "1:1", label: "1:1 (正方形)", description: "正方形" },
+  { value: "21:9", label: "21:9 (超宽横版)", description: "超宽横版" },
+  { value: "16:9", label: "16:9 (横版)", description: "横版" },
+  { value: "3:2", label: "3:2 (横版)", description: "横版" },
+  { value: "4:3", label: "4:3 (横版)", description: "横版" },
+  { value: "5:4", label: "5:4 (横版)", description: "横版" },
+  { value: "4:5", label: "4:5 (竖版)", description: "竖版" },
+  { value: "3:4", label: "3:4 (竖版)", description: "竖版" },
+  { value: "2:3", label: "2:3 (竖版)", description: "竖版" },
+  { value: "9:16", label: "9:16 (竖版)", description: "竖版" },
+  { value: "9:21", label: "9:21 (超高竖版)", description: "超高竖版" },
+];
 
 function formatAspectNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
@@ -43,21 +56,6 @@ function normalizeAspectRatio(value: string) {
   const width = Number(match[1]);
   const height = Number(match[2]);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return "";
-  }
-
-  return `${formatAspectNumber(width)}:${formatAspectNumber(height)}`;
-}
-
-function normalizeCustomAspectRatio(value: string) {
-  const match = /^\s*(\d+(?:\.\d+)?)\s*[:xX/]\s*(\d+(?:\.\d+)?)\s*$/.exec(value);
-  if (!match) {
-    return "";
-  }
-
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || width > 21 || height > 21) {
     return "";
   }
 
@@ -127,32 +125,11 @@ export function ImageComposer({
 }: ImageComposerProps) {
   const [isSizeMenuOpen, setIsSizeMenuOpen] = useState(false);
   const [hoveredSizeValue, setHoveredSizeValue] = useState<string | null>(null);
-  const [customAspectInput, setCustomAspectInput] = useState("");
-  const [customAspectError, setCustomAspectError] = useState("");
-  const imageSizeOptions = [
-    { value: "", label: "未指定", description: "" },
-    { value: "1:1", label: "1:1 (正方形)", description: "正方形" },
-    { value: "21:9", label: "21:9 (超宽横版)", description: "超宽横版" },
-    { value: "16:9", label: "16:9 (横版)", description: "横版" },
-    { value: "3:2", label: "3:2 (横版)", description: "横版" },
-    { value: "4:3", label: "4:3 (横版)", description: "横版" },
-    { value: "5:4", label: "5:4 (横版)", description: "横版" },
-    { value: "4:5", label: "4:5 (竖版)", description: "竖版" },
-    { value: "3:4", label: "3:4 (竖版)", description: "竖版" },
-    { value: "2:3", label: "2:3 (竖版)", description: "竖版" },
-    { value: "9:16", label: "9:16 (竖版)", description: "竖版" },
-    { value: "9:21", label: "9:21 (超高竖版)", description: "超高竖版" },
-  ].filter((option) => option.value !== "");
-  const matchedSizeOption = imageSizeOptions.find((option) => option.value === imageSize);
-  const selectedSizeOption =
-    matchedSizeOption ||
-    (imageSize
-      ? { value: imageSize, label: `${imageSize} (自定义)`, description: "自定义" }
-      : imageSizeOptions[0]);
+  const matchedSizeOption = FIXED_IMAGE_SIZE_OPTIONS.find((option) => option.value === imageSize);
+  const selectedSizeOption = matchedSizeOption || FIXED_IMAGE_SIZE_OPTIONS[0];
   const imageSizeValueLabel = selectedSizeOption.value || selectedSizeOption.label;
   const previewSizeOption =
-    imageSizeOptions.find((option) => option.value === hoveredSizeValue) ||
-    (hoveredSizeValue ? { value: hoveredSizeValue, label: `${hoveredSizeValue} (自定义)`, description: "自定义" } : selectedSizeOption);
+    FIXED_IMAGE_SIZE_OPTIONS.find((option) => option.value === hoveredSizeValue) || selectedSizeOption;
   const previewAspectStyle = getAspectPreviewStyle(previewSizeOption.value);
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
   const [isComposerCollapsed, setIsComposerCollapsed] = useState(() => {
@@ -208,20 +185,6 @@ export function ImageComposer({
     textareaRef.current?.blur();
     resetComposerPlacement();
   }, [resetComposerPlacement, textareaRef]);
-
-  const applyCustomAspectRatio = useCallback(() => {
-    const normalized = normalizeCustomAspectRatio(customAspectInput);
-    if (!normalized) {
-      setCustomAspectError("请输入 1-21 范围内的比例，如 7:5");
-      return;
-    }
-
-    onImageSizeChange(normalized);
-    setCustomAspectInput(normalized);
-    setCustomAspectError("");
-    setHoveredSizeValue(null);
-    setIsSizeMenuOpen(false);
-  }, [customAspectInput, onImageSizeChange]);
 
   const resizePromptTextarea = useCallback((force = false) => {
     if (typeof window === "undefined") {
@@ -344,6 +307,12 @@ export function ImageComposer({
 
     window.localStorage.setItem(COMPOSER_COLLAPSED_STORAGE_KEY, isComposerCollapsed ? "1" : "0");
   }, [isComposerCollapsed]);
+
+  useEffect(() => {
+    if (!matchedSizeOption) {
+      onImageSizeChange(FIXED_IMAGE_SIZE_OPTIONS[0].value);
+    }
+  }, [matchedSizeOption, onImageSizeChange]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -503,7 +472,7 @@ export function ImageComposer({
                         >
                           <div className="grid grid-cols-[178px_minmax(0,1fr)] gap-2">
                             <div className="max-h-[min(48dvh,404px)] overflow-y-auto pr-1">
-                              {imageSizeOptions.map((option) => {
+                              {FIXED_IMAGE_SIZE_OPTIONS.map((option) => {
                                 const active = option.value === imageSize;
                                 return (
                                   <button
@@ -532,35 +501,6 @@ export function ImageComposer({
                                   </button>
                                 );
                               })}
-                              <form
-                                className="mt-2 border-t border-stone-100 pt-2 sm:hidden"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  applyCustomAspectRatio();
-                                }}
-                              >
-                                <div className="mb-1 px-2 text-xs font-medium text-stone-500">自定义比例</div>
-                                <div className="flex gap-2">
-                                  <Input
-                                    value={customAspectInput}
-                                    onChange={(event) => {
-                                      setCustomAspectInput(event.target.value);
-                                      setCustomAspectError("");
-                                      const normalized = normalizeCustomAspectRatio(event.target.value);
-                                      setHoveredSizeValue(normalized || null);
-                                    }}
-                                    placeholder="7:5"
-                                    className="h-9 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="h-9 shrink-0 rounded-xl bg-stone-950 px-3 text-xs font-medium text-white transition hover:bg-stone-800"
-                                  >
-                                    应用
-                                  </button>
-                                </div>
-                                {customAspectError ? <div className="mt-1 px-2 text-xs text-red-500">{customAspectError}</div> : null}
-                              </form>
                             </div>
                             <div className="flex min-h-[178px] flex-col items-center justify-center rounded-2xl bg-stone-50 p-3">
                               <div className="mb-3 text-center text-xs font-medium text-stone-500">
@@ -572,35 +512,6 @@ export function ImageComposer({
                                   style={previewAspectStyle}
                                 />
                               </div>
-                              <form
-                                className="mt-3 hidden w-full sm:block"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  applyCustomAspectRatio();
-                                }}
-                              >
-                                <div className="mb-1 text-xs font-medium text-stone-500">自定义比例</div>
-                                <div className="flex gap-2">
-                                  <Input
-                                    value={customAspectInput}
-                                    onChange={(event) => {
-                                      setCustomAspectInput(event.target.value);
-                                      setCustomAspectError("");
-                                      const normalized = normalizeCustomAspectRatio(event.target.value);
-                                      setHoveredSizeValue(normalized || null);
-                                    }}
-                                    placeholder="7:5"
-                                    className="h-9 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="h-9 shrink-0 rounded-xl bg-stone-950 px-3 text-xs font-medium text-white transition hover:bg-stone-800"
-                                  >
-                                    应用
-                                  </button>
-                                </div>
-                                {customAspectError ? <div className="mt-1 text-xs text-red-500">{customAspectError}</div> : null}
-                              </form>
                             </div>
                           </div>
                         </PopoverPrimitive.Content>
@@ -830,16 +741,10 @@ export function ImageComposer({
                           isComposerCollapsed && "sm:hidden",
                         )}
                         onOpenAutoFocus={(event) => event.preventDefault()}
-                        onPointerDownOutside={(event) => {
-                          const target = event.target as HTMLElement | null;
-                          if (target?.closest("[data-custom-aspect-input]")) {
-                            event.preventDefault();
-                          }
-                        }}
                       >
                         <div className="sm:grid sm:grid-cols-[178px_minmax(0,1fr)] sm:gap-2">
                           <div className="max-h-[min(36dvh,284px)] overflow-y-auto pr-0 pb-2 sm:max-h-[min(48dvh,404px)] sm:pr-1 sm:pb-0">
-                            {imageSizeOptions.map((option) => {
+                            {FIXED_IMAGE_SIZE_OPTIONS.map((option) => {
                               const active = option.value === imageSize;
                               return (
                                 <button
@@ -868,38 +773,6 @@ export function ImageComposer({
                                   </button>
                                 );
                               })}
-                              <form
-                                className="sticky bottom-0 mt-2 border-t border-stone-100 bg-white pt-2 pb-1 sm:hidden"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  applyCustomAspectRatio();
-                                }}
-                              >
-                                <div className="mb-1 px-2 text-xs font-medium text-stone-500">自定义比例</div>
-                                <div className="flex items-center gap-2">
-                                  <Input
-                                    data-custom-aspect-input
-                                    value={customAspectInput}
-                                    inputMode="decimal"
-                                    onChange={(event) => {
-                                      setCustomAspectInput(event.target.value);
-                                      setCustomAspectError("");
-                                      const normalized = normalizeCustomAspectRatio(event.target.value);
-                                      setHoveredSizeValue(normalized || null);
-                                    }}
-                                    placeholder="7:5"
-                                    className="h-10 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
-                                  />
-                                  <button
-                                    type="submit"
-                                    className="h-10 shrink-0 rounded-xl bg-stone-950 px-3 text-xs font-medium text-white transition hover:bg-stone-800"
-                                  >
-                                    应用
-                                  </button>
-                                </div>
-                                {customAspectError ? <div className="mt-1 px-2 text-xs text-red-500">{customAspectError}</div> : null}
-                              </form>
                             </div>
                           <div className="hidden rounded-2xl bg-stone-50 p-3 sm:flex sm:min-h-[178px] sm:flex-col sm:items-center sm:justify-center">
                             <div className="mb-3 text-center text-xs font-medium text-stone-500">
@@ -911,35 +784,6 @@ export function ImageComposer({
                                 style={previewAspectStyle}
                               />
                             </div>
-                            <form
-                              className="mt-3 hidden w-full sm:block"
-                              onSubmit={(event) => {
-                                event.preventDefault();
-                                applyCustomAspectRatio();
-                              }}
-                            >
-                              <div className="mb-1 text-xs font-medium text-stone-500">自定义比例</div>
-                              <div className="flex gap-2">
-                                <Input
-                                  value={customAspectInput}
-                                  onChange={(event) => {
-                                    setCustomAspectInput(event.target.value);
-                                    setCustomAspectError("");
-                                    const normalized = normalizeCustomAspectRatio(event.target.value);
-                                    setHoveredSizeValue(normalized || null);
-                                  }}
-                                  placeholder="7:5"
-                                  className="h-9 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
-                                />
-                                <button
-                                  type="submit"
-                                  className="h-9 shrink-0 rounded-xl bg-stone-950 px-3 text-xs font-medium text-white transition hover:bg-stone-800"
-                                >
-                                  应用
-                                </button>
-                              </div>
-                              {customAspectError ? <div className="mt-1 text-xs text-red-500">{customAspectError}</div> : null}
-                            </form>
                           </div>
                         </div>
                       </PopoverPrimitive.Content>
