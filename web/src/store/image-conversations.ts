@@ -63,11 +63,15 @@ const legacyImageConversationStorage = localforage.createInstance({
 });
 
 const IMAGE_CONVERSATIONS_KEY = "items";
+const MAX_STORED_IMAGE_CONVERSATIONS = 40;
+const MAX_STORED_TURNS_PER_CONVERSATION = 30;
+const MAX_STORED_REFERENCE_IMAGES_PER_TURN = 3;
 let imageConversationWriteQueue: Promise<void> = Promise.resolve();
 
 function normalizeStoredImage(image: StoredImage): StoredImage {
   const normalized = {
     ...image,
+    b64_json: typeof image.url === "string" && image.url ? undefined : image.b64_json,
     taskId: typeof image.taskId === "string" && image.taskId ? image.taskId : undefined,
     url: typeof image.url === "string" && image.url ? image.url : undefined,
     revised_prompt: typeof image.revised_prompt === "string" ? image.revised_prompt : undefined,
@@ -190,6 +194,25 @@ function sortImageConversations(conversations: ImageConversation[]): ImageConver
   return [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function compactImageConversationForStorage(conversation: ImageConversation): ImageConversation {
+  const turns = conversation.turns.slice(-MAX_STORED_TURNS_PER_CONVERSATION).map((turn) => ({
+    ...turn,
+    referenceImages: turn.referenceImages.slice(0, MAX_STORED_REFERENCE_IMAGES_PER_TURN),
+    images: turn.images.map(normalizeStoredImage),
+  }));
+  return {
+    ...conversation,
+    turns,
+  };
+}
+
+function compactImageConversationsForStorage(conversations: ImageConversation[]): ImageConversation[] {
+  return sortImageConversations(conversations.map(compactImageConversationForStorage)).slice(
+    0,
+    MAX_STORED_IMAGE_CONVERSATIONS,
+  );
+}
+
 function getTimestamp(value: string) {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -241,7 +264,7 @@ export async function saveImageConversations(conversations: ImageConversation[])
     }
     await imageConversationStorage.setItem(
       IMAGE_CONVERSATIONS_KEY,
-      sortImageConversations([...conversationMap.values()]),
+      compactImageConversationsForStorage([...conversationMap.values()]),
     );
   });
 }
@@ -256,7 +279,7 @@ export async function saveImageConversation(conversation: ImageConversation): Pr
       persistedConversation,
       ...items.filter((item) => item.id !== persistedConversation.id),
     ]);
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
+    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, compactImageConversationsForStorage(nextItems));
   });
 }
 

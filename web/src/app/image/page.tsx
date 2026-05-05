@@ -159,35 +159,11 @@ async function fetchImageAsFile(url: string, fileName: string) {
   return new File([blob], fileName, { type: blob.type || "image/png" });
 }
 
-function blobToBase64(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      resolve(dataUrl.split(",", 2)[1] || "");
-    };
-    reader.onerror = () => reject(new Error("读取图片数据失败"));
-    reader.readAsDataURL(blob);
-  });
-}
-
 async function recallImageResult(image: ImageResponse["data"][number]) {
-  if (image.b64_json) {
+  if (image.b64_json || image.url) {
     return image;
   }
-  if (!image.url) {
-    throw new Error("接口没有返回图片数据");
-  }
-
-  const response = await fetch(image.url, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("图片召回失败");
-  }
-  const blob = await response.blob();
-  return {
-    ...image,
-    b64_json: await blobToBase64(blob),
-  };
+  throw new Error("接口没有返回图片数据");
 }
 
 async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
@@ -1457,7 +1433,7 @@ function ImagePageContent() {
                 taskId: returnedTaskId,
                 status: "success" as const,
                 b64_json: first.b64_json,
-                url: undefined,
+                url: first.url,
                 revised_prompt: first.revised_prompt,
                 error: undefined,
                 completedAt: new Date().toISOString(),
@@ -1491,7 +1467,7 @@ function ImagePageContent() {
                   taskId: effectiveTaskId,
                   status: "success" as const,
                   b64_json: recoveredImage.b64_json,
-                  url: undefined,
+                  url: recoveredImage.url,
                   revised_prompt: recoveredImage.revised_prompt,
                   error: undefined,
                   completedAt: new Date().toISOString(),

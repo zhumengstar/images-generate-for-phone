@@ -365,7 +365,7 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
         ...(model ? { model } : {}),
         ...(size ? { size } : {}),
         n: 1,
-        response_format: "b64_json",
+        response_format: "url",
         client_device_fingerprint: deviceFingerprint,
     }),
   });
@@ -514,7 +514,7 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
     formData.append("size", size);
   }
   formData.append("n", String(Math.min(2, Math.max(1, Math.floor(count) || 1))));
-  formData.append("response_format", "b64_json");
+  formData.append("response_format", "url");
 
   const response = await fetch("/api/ip-limited/images/edits", {
     method: "POST",

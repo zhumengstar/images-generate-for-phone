@@ -3,7 +3,6 @@
 import json
 import os
 import base64
-import binascii
 import hashlib
 import re
 import socket
@@ -15,6 +14,7 @@ import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -42,6 +42,7 @@ PROMPT_POLISH_CONFIG_PATH = DATA_DIR / "prompt_polish_config.json"
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
 IMAGE_SHARE_REWARDS_PATH = DATA_DIR / "image_share_rewards.json"
+PERSISTED_IMAGE_DIR_NAME = "generated"
 IP_QUOTA_LOCK = Lock()
 IP_IMAGE_TASKS_LOCK = Lock()
 IMAGE_SHARE_REWARDS_LOCK = Lock()
@@ -322,40 +323,61 @@ def _usable_image_count(data: dict[str, Any]) -> int:
     )
 
 
-def _recall_image_item(item: Any, headers: dict[str, str]) -> Any:
-    if not isinstance(item, dict):
-        return item
-    if item.get("b64_json"):
-        return {**item, "url": ""}
-    if not item.get("url"):
-        return item
+def _proxy_image_url(url: str) -> str:
+    return urllib.parse.urljoin(f"{IMAGE_PROXY_BASE_URL}/", url)
 
-    request_headers = {
+
+def _image_request_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {
         key: value
         for key, value in headers.items()
         if key.lower() in {"authorization", "x-device-fingerprint", "x-forwarded-for"}
     }
-    image_url = urllib.parse.urljoin(f"{IMAGE_PROXY_BASE_URL}/", str(item["url"]))
-    request = urllib.request.Request(image_url, headers=request_headers, method="GET")
+
+
+def _persist_image_item(item: Any, headers: dict[str, str], output_dir: Path, asset_name: str) -> Any:
+    if not isinstance(item, dict):
+        return item
+    next_item = dict(item)
+    b64_json = str(next_item.pop("b64_json", "") or "")
+    url = str(next_item.get("url") or "")
+    if not b64_json and not url:
+        return item
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    asset_path = output_dir / asset_name
     try:
-        with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
-            raw = response.read()
+        if b64_json:
+            asset_path.write_bytes(base64.b64decode(b64_json, validate=False))
+        else:
+            request = urllib.request.Request(_proxy_image_url(url), headers=_image_request_headers(headers), method="GET")
+            with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+                with asset_path.open("wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
     except Exception:
         return item
     return {
-        **item,
-        "b64_json": base64.b64encode(raw).decode("ascii"),
-        "url": "",
+        **next_item,
+        "url": f"/images/{PERSISTED_IMAGE_DIR_NAME}/{asset_name}",
     }
 
 
-def _recall_image_data(data: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+def _persist_image_data(data: dict[str, Any], headers: dict[str, str], scope_key: str) -> dict[str, Any]:
     items = data.get("data")
     if not isinstance(items, list):
         return data
+    digest = hashlib.sha256(scope_key.encode("utf-8", errors="ignore")).hexdigest()[:24]
+    output_dir = config.images_dir / PERSISTED_IMAGE_DIR_NAME
     return {
         **data,
-        "data": [_recall_image_item(item, headers) for item in items],
+        "data": [
+            _persist_image_item(item, headers, output_dir, f"{digest}-{index}.png")
+            for index, item in enumerate(items)
+        ],
     }
 
 
@@ -363,7 +385,7 @@ def _stable_image_count(data: dict[str, Any]) -> int:
     items = data.get("data")
     if not isinstance(items, list):
         return 0
-    return sum(1 for item in items if isinstance(item, dict) and item.get("b64_json"))
+    return sum(1 for item in items if isinstance(item, dict) and (item.get("b64_json") or item.get("url")))
 
 
 def _web_asset_headers(asset_path: Any) -> dict[str, str]:
@@ -524,24 +546,13 @@ def _task_asset_name(task_key: str, index: int) -> str:
 def _persist_ip_task_images(task_key: str, data: Any) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         return []
-    output_dir = config.images_dir / "ip-tasks"
+    output_dir = config.images_dir / PERSISTED_IMAGE_DIR_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
     persisted: list[dict[str, Any]] = []
     for index, item in enumerate(data):
         if not isinstance(item, dict):
             continue
-        next_item = dict(item)
-        b64_json = str(next_item.pop("b64_json", "") or "")
-        if b64_json and not next_item.get("url"):
-            try:
-                raw = base64.b64decode(b64_json, validate=False)
-            except (binascii.Error, ValueError):
-                raw = b""
-            if raw:
-                asset_name = _task_asset_name(task_key, index)
-                asset_path = output_dir / asset_name
-                asset_path.write_bytes(raw)
-                next_item["url"] = f"/images/ip-tasks/{asset_name}"
+        next_item = _persist_image_item(item, {}, output_dir, _task_asset_name(task_key, index))
         if next_item.get("url"):
             persisted.append(next_item)
     return persisted
@@ -861,7 +872,7 @@ def _run_ip_image_task(
         if usable_count == 0:
             raise RuntimeError("鎺ュ彛娌℃湁杩斿洖鍥剧墖鏁版嵁")
         if isinstance(data, dict):
-            data = _recall_image_data(data, headers)
+            data = _persist_image_data(data, headers, task_key)
         stable_count = _stable_image_count(data) if isinstance(data, dict) else 0
         if stable_count == 0:
             refund_once(usable_count)
@@ -1161,7 +1172,7 @@ def create_app() -> FastAPI:
             "prompt": prompt,
             "model": task_model,
             "n": 1,
-            "response_format": "b64_json",
+            "response_format": "url",
         }
         if task_size:
             generation_payload["size"] = task_size
@@ -1261,7 +1272,7 @@ def create_app() -> FastAPI:
             "prompt": prompt,
             "model": task_model,
             "n": "1",
-            "response_format": "b64_json",
+            "response_format": "url",
         }
         if task_size:
             fields["size"] = task_size
@@ -1335,6 +1346,7 @@ def create_app() -> FastAPI:
 
         count = max(1, min(2, int(payload.get("n") or 1)))
         payload["n"] = count
+        payload["response_format"] = "url"
         _consume_ip_quota(str(subject["key"]), int(subject["limit"]), count)
         prompt = str(payload.get("prompt") or "")
         if _image_prompt_safety_violation(prompt):
@@ -1356,7 +1368,7 @@ def create_app() -> FastAPI:
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片生成失败，接口没有返回图片数据"})
         if isinstance(data, dict):
-            data = _recall_image_data(data, headers)
+            data = _persist_image_data(data, headers, f"{subject['key']}:{uuid.uuid4().hex}")
             stable_count = _stable_image_count(data)
             if stable_count == 0:
                 _refund_ip_quota(str(subject["key"]), usable_count, int(subject["limit"]))
@@ -1394,7 +1406,7 @@ def create_app() -> FastAPI:
             "prompt": prompt,
             "model": model or "gpt-image-2",
             "n": str(count),
-            "response_format": response_format or "b64_json",
+            "response_format": "url",
         }
         if size:
             fields["size"] = size
@@ -1412,7 +1424,7 @@ def create_app() -> FastAPI:
         if usable_count == 0:
             return JSONResponse(status_code=502, content={"error": "图片编辑失败，接口没有返回图片数据"})
         if isinstance(data, dict):
-            data = _recall_image_data(data, headers)
+            data = _persist_image_data(data, headers, f"{subject['key']}:{uuid.uuid4().hex}")
             stable_count = _stable_image_count(data)
             if stable_count == 0:
                 _refund_ip_quota(str(subject["key"]), usable_count, int(subject["limit"]))
