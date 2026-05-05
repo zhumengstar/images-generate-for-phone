@@ -3,6 +3,7 @@
 import json
 import os
 import base64
+import re
 import socket
 import time
 import uuid
@@ -46,6 +47,50 @@ ACTIVE_IP_TASK_LOCK = Lock()
 ACTIVE_IP_TASKS: set[str] = set()
 ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
 MAX_OWNER_QUEUED_IMAGE_TASKS = 4
+
+IMAGE_PROMPT_SAFETY_NOTICE = (
+    "当前提示词包含违法违规或敏感内容，无法生成图片。请修改为合法、健康、非敏感的描述后再提交。"
+)
+IMAGE_PROMPT_SAFETY_SYSTEM_PROMPT = """
+你是图片生成请求的安全审核员。请依据中国法律法规和平台安全规范审核用户提示词。
+如果提示词涉及以下内容，应禁止生成并向用户提示：
+1. 危害国家安全、分裂国家、颠覆政权、恐怖主义、极端主义、暴力犯罪、制造武器或爆炸物。
+2. 色情低俗、未成年人不当内容、性剥削、裸露或性暗示。
+3. 赌博、毒品、诈骗、黑客攻击、非法交易、规避监管、侵犯隐私或个人信息滥用。
+4. 仇恨、歧视、骚扰、人身攻击、血腥暴力、自残自杀引导。
+5. 现实政治敏感事件、敏感人物、敏感组织、敏感标识或可能引发公共风险的内容。
+任务可以先进入等待队列；命中时不要调用图片生成接口、不要返回图片，只返回中文提示：
+“当前提示词包含违法违规或敏感内容，无法生成图片。请修改为合法、健康、非敏感的描述后再提交。”
+""".strip()
+
+IMAGE_PROMPT_SAFETY_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("违法犯罪", r"(炸弹|爆炸物|枪支|弹药|毒品|贩毒|诈骗|洗钱|赌博|黑客|木马|盗号|身份证号|银行卡号)"),
+    ("暴力恐怖", r"(恐怖主义|极端主义|血腥|虐杀|屠杀|自杀|自残|人肉|绑架|勒索)"),
+    ("色情低俗", r"(色情|裸露|裸体|性行为|性暗示|成人视频|未成年.*性|儿童.*裸|萝莉.*裸)"),
+    ("敏感政治", r"(分裂国家|颠覆国家|煽动颠覆|危害国家安全|敏感政治|政治敏感|反动|暴乱|暴恐)"),
+    ("仇恨歧视", r"(种族歧视|地域歧视|仇恨言论|纳粹|辱骂.*群体)"),
+)
+
+
+def _image_prompt_safety_violation(prompt: str) -> str:
+    normalized = re.sub(r"\s+", "", prompt or "").lower()
+    if not normalized:
+        return ""
+    for label, pattern in IMAGE_PROMPT_SAFETY_PATTERNS:
+        if re.search(pattern, normalized, re.IGNORECASE):
+            return label
+    return ""
+
+
+def _assert_image_prompt_safe(prompt: str) -> None:
+    if _image_prompt_safety_violation(prompt):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": IMAGE_PROMPT_SAFETY_NOTICE,
+                "safety_prompt": IMAGE_PROMPT_SAFETY_SYSTEM_PROMPT,
+            },
+        )
 
 
 def _now_iso() -> str:
@@ -655,6 +700,10 @@ def _run_ip_image_task(
 
     _update_ip_task(task_key, status="running", error="")
     try:
+        task_prompt = str((fields or {}).get("prompt") or (payload or {}).get("prompt") or "")
+        if _image_prompt_safety_violation(task_prompt):
+            refund_once(count)
+            raise RuntimeError(IMAGE_PROMPT_SAFETY_NOTICE)
         if mode == "edit":
             status, data = _proxy_image_edit(fields or {}, files or [], headers)
         else:
@@ -1120,6 +1169,10 @@ def create_app() -> FastAPI:
         count = max(1, min(2, int(payload.get("n") or 1)))
         payload["n"] = count
         _consume_ip_quota(str(subject["key"]), int(subject["limit"]), count)
+        prompt = str(payload.get("prompt") or "")
+        if _image_prompt_safety_violation(prompt):
+            _refund_ip_quota(str(subject["key"]), count, int(subject["limit"]))
+            return JSONResponse(status_code=400, content={"error": IMAGE_PROMPT_SAFETY_NOTICE})
 
         headers = {
             "Content-Type": "application/json",
@@ -1167,6 +1220,9 @@ def create_app() -> FastAPI:
 
         files = await _read_edit_uploads(image)
         _consume_ip_quota(str(subject["key"]), int(subject["limit"]), count)
+        if _image_prompt_safety_violation(prompt):
+            _refund_ip_quota(str(subject["key"]), count, int(subject["limit"]))
+            return JSONResponse(status_code=400, content={"error": IMAGE_PROMPT_SAFETY_NOTICE})
         fields = {
             "prompt": prompt,
             "model": model or "gpt-image-2",
