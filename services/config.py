@@ -120,16 +120,16 @@ class ConfigStore:
     @property
     def guest_image_quota_limit(self) -> int:
         return _non_negative_int(
-            os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT") or self.data.get("guest_image_quota_limit"),
+            self.data.get("guest_image_quota_limit") if "guest_image_quota_limit" in self.data else os.getenv("IMAGE_PROXY_GUEST_QUOTA_LIMIT"),
             5,
         )
 
     @property
     def user_image_quota_limit(self) -> int:
         return _non_negative_int(
-            os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT")
-            or os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT")
-            or self.data.get("user_image_quota_limit"),
+            self.data.get("user_image_quota_limit")
+            if "user_image_quota_limit" in self.data
+            else os.getenv("IMAGE_PROXY_USER_QUOTA_LIMIT") or os.getenv("IMAGE_PROXY_IP_QUOTA_LIMIT"),
             20,
         )
 
