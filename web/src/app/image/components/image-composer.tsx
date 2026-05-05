@@ -168,6 +168,7 @@ export function ImageComposer({
   const [desktopPromptHeight, setDesktopPromptHeight] = useState<number | null>(null);
   const lastPromptExpandedRef = useRef(isPromptExpanded);
   const promptResizeDragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const composerRootRef = useRef<HTMLDivElement | null>(null);
   const shouldExpandPromptInput = prompt.trim().length > 80 || prompt.includes("\n");
 
   const markPromptFocused = useCallback(() => {
@@ -357,8 +358,43 @@ export function ImageComposer({
     };
   }, [resizePromptTextarea]);
 
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+    const updateMobileComposerHeight = () => {
+      if (window.innerWidth >= 640) {
+        root.style.removeProperty("--image-mobile-composer-height");
+        return;
+      }
+
+      const height = composerRootRef.current?.getBoundingClientRect().height || 0;
+      root.style.setProperty("--image-mobile-composer-height", `${Math.ceil(height)}px`);
+    };
+
+    updateMobileComposerHeight();
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" && composerRootRef.current
+        ? new ResizeObserver(updateMobileComposerHeight)
+        : null;
+    if (composerRootRef.current) {
+      resizeObserver?.observe(composerRootRef.current);
+    }
+    window.addEventListener("resize", updateMobileComposerHeight);
+    window.addEventListener("orientationchange", updateMobileComposerHeight);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateMobileComposerHeight);
+      window.removeEventListener("orientationchange", updateMobileComposerHeight);
+      root.style.removeProperty("--image-mobile-composer-height");
+    };
+  }, []);
+
   return (
     <div
+      ref={composerRootRef}
       className="image-mobile-composer z-50 flex shrink-0 justify-center border-t border-stone-200/80 bg-white backdrop-blur sm:relative sm:inset-auto sm:z-20 sm:translate-y-0 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 lg:pt-3"
     >
       <div style={{ width: "min(980px, 100%)" }}>

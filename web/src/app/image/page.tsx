@@ -1935,7 +1935,7 @@ function ImagePageContent() {
           <section className="image-middle-region min-h-0 overflow-hidden lg:rounded-[20px] lg:border lg:border-stone-200/60 lg:bg-stone-50/45" aria-label="图片生成区域">
             <div
               ref={resultsViewportRef}
-              className="hide-scrollbar h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 py-2 sm:px-4 sm:py-4 lg:px-6 lg:py-5"
+              className="hide-scrollbar h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-3 pt-2 pb-[calc(var(--image-mobile-composer-height,96px)+0.75rem)] sm:px-4 sm:py-4 lg:px-6 lg:py-5"
             >
               <ImageResults
                 selectedConversation={deferredSelectedConversation}
