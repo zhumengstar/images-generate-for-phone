@@ -763,7 +763,7 @@ export function ImageComposer({
                       }
                     }}
                   >
-                    <div className="relative flex h-9 min-w-[118px] shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] min-[390px]:min-w-[128px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px] lg:px-4">
+                    <div className="relative flex h-9 min-w-[132px] shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2.5 py-0.5 text-[11px] min-[390px]:min-w-[148px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px] lg:px-4">
                       <span className="shrink-0 whitespace-nowrap font-medium text-stone-700 sm:text-sm">比例</span>
                       <PopoverPrimitive.Trigger asChild>
                         <button
@@ -801,7 +801,7 @@ export function ImageComposer({
                                   key={option.label}
                                   type="button"
                                   className={cn(
-                                    "flex h-11 w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm text-stone-700 transition hover:bg-stone-100 sm:h-auto sm:rounded-2xl",
+                                    "grid h-11 w-full grid-cols-[minmax(0,1fr)_40px_18px] items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-stone-700 transition hover:bg-stone-100 sm:flex sm:h-auto sm:justify-between sm:rounded-2xl",
                                     active && "bg-stone-100 font-medium text-stone-950",
                                   )}
                                   onMouseEnter={() => setHoveredSizeValue(option.value)}
@@ -812,21 +812,24 @@ export function ImageComposer({
                                     setHoveredSizeValue(null);
                                   }}
                                 >
-                                  <span className="min-w-0 flex-1 truncate pr-2">{option.label}</span>
+                                  <span className="min-w-0 truncate sm:flex-1 sm:pr-2">{option.label}</span>
                                   <span className="flex h-7 w-10 shrink-0 items-center justify-center rounded-lg border border-stone-200 bg-white shadow-inner" aria-hidden="true">
                                     <span
                                       className="rounded-[3px] border border-stone-400 bg-stone-100"
                                       style={getAspectThumbnailStyle(option.value)}
                                     />
                                   </span>
-                                  {active ? <Check className="ml-1 size-4 shrink-0" /> : null}
+                                  {active ? <Check className="size-4 shrink-0 sm:ml-1" /> : <span aria-hidden="true" />}
                                   </button>
                                 );
                               })}
                               <form
                                 className="sticky bottom-0 mt-2 border-t border-stone-100 bg-white pt-2 pb-1 sm:hidden"
+                                onClick={(event) => event.stopPropagation()}
+                                onPointerDown={(event) => event.stopPropagation()}
                                 onSubmit={(event) => {
                                   event.preventDefault();
+                                  event.stopPropagation();
                                   applyCustomAspectRatio();
                                 }}
                               >
@@ -834,12 +837,15 @@ export function ImageComposer({
                                 <div className="flex items-center gap-2">
                                   <Input
                                     value={customAspectInput}
+                                    inputMode="decimal"
                                     onChange={(event) => {
                                       setCustomAspectInput(event.target.value);
                                       setCustomAspectError("");
                                       const normalized = normalizeCustomAspectRatio(event.target.value);
                                       setHoveredSizeValue(normalized || null);
                                     }}
+                                    onClick={(event) => event.stopPropagation()}
+                                    onPointerDown={(event) => event.stopPropagation()}
                                     placeholder="7:5"
                                     className="h-10 min-w-0 flex-1 rounded-xl border-stone-200 px-3 text-sm"
                                   />
