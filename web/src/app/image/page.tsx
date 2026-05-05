@@ -714,7 +714,7 @@ function ImagePageContent() {
         (active instanceof HTMLElement && active.isContentEditable)
       );
     };
-    const applyKeyboardOffset = (offset: number, maxOffset: number) => {
+    const applyKeyboardOffset = (offset: number, maxOffset: number, keyboardVisible: boolean) => {
       const roundedOffset = Math.round(offset);
       if (keyboardFrame) {
         window.cancelAnimationFrame(keyboardFrame);
@@ -722,6 +722,10 @@ function ImagePageContent() {
       keyboardFrame = window.requestAnimationFrame(() => {
         root.style.setProperty("--image-composer-keyboard-offset", `${roundedOffset}px`);
         lastKeyboardOffset = roundedOffset;
+        if (!keyboardVisible) {
+          keyboardFrame = 0;
+          return;
+        }
         keyboardFrame = window.requestAnimationFrame(() => {
           const composer = document.querySelector<HTMLElement>(".image-mobile-composer");
           const viewport = window.visualViewport;
@@ -780,13 +784,14 @@ function ImagePageContent() {
       const rawKeyboardOffset = Math.max(viewportOverlap, baselineOverlap);
       const maxReasonableOffset = Math.max(0, Math.round(window.innerHeight * 0.62));
       const keyboardOffset = Math.min(rawKeyboardOffset, maxReasonableOffset);
+      const keyboardVisible = keyboardOffset > 80;
       root.classList.add("image-keyboard-active");
       const roundedOffset = Math.round(keyboardOffset);
       if (Math.abs(roundedOffset - lastKeyboardOffset) < 2) {
-        applyKeyboardOffset(lastKeyboardOffset, maxReasonableOffset);
+        applyKeyboardOffset(lastKeyboardOffset, maxReasonableOffset, keyboardVisible);
         return;
       }
-      applyKeyboardOffset(roundedOffset, maxReasonableOffset);
+      applyKeyboardOffset(roundedOffset, maxReasonableOffset, keyboardVisible);
     };
 
     try {
@@ -800,7 +805,7 @@ function ImagePageContent() {
     lockMobilePage();
     const handleFocusIn = () => {
       window.setTimeout(lockMobilePage, 0);
-      [120, 320].forEach((delay) => window.setTimeout(lockMobilePage, delay));
+      [120, 320, 640].forEach((delay) => window.setTimeout(lockMobilePage, delay));
     };
     const handleFocusOut = () => {
       window.setTimeout(lockMobilePage, 80);
