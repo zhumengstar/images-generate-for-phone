@@ -116,6 +116,10 @@ export default function UsersPage() {
     [quotaDrafts, saveUserQuota],
   );
 
+  const clearSelectedUsers = useCallback(() => {
+    setSelectedUserIds([]);
+  }, []);
+
   useEffect(() => {
     if (isCheckingAuth || !session || session.role !== "admin") {
       return;
@@ -133,6 +137,11 @@ export default function UsersPage() {
       window.removeEventListener("resize", updateViewportHeight);
     };
   }, []);
+
+  useEffect(() => {
+    const existingIds = new Set(users.map((user) => user.id));
+    setSelectedUserIds((current) => current.filter((id) => existingIds.has(id)));
+  }, [users]);
 
   const stats = useMemo(
     () => ({
@@ -162,6 +171,90 @@ export default function UsersPage() {
     });
   }, [quotaFilter, roleFilter, searchText, users]);
 
+  const selectableFilteredUsers = useMemo(
+    () => filteredUsers.filter((user) => user.role !== "admin"),
+    [filteredUsers],
+  );
+
+  const selectedUsers = useMemo(
+    () => users.filter((user) => user.role !== "admin" && selectedUserIds.includes(user.id)),
+    [selectedUserIds, users],
+  );
+
+  const allVisibleSelected =
+    selectableFilteredUsers.length > 0 && selectableFilteredUsers.every((user) => selectedUserIds.includes(user.id));
+
+  const toggleUserSelected = (user: WebUser) => {
+    if (user.role === "admin") {
+      return;
+    }
+    setSelectedUserIds((current) =>
+      current.includes(user.id) ? current.filter((id) => id !== user.id) : [...current, user.id],
+    );
+  };
+
+  const toggleVisibleSelected = () => {
+    const visibleIds = selectableFilteredUsers.map((user) => user.id);
+    if (visibleIds.length === 0) {
+      return;
+    }
+    setSelectedUserIds((current) => {
+      if (visibleIds.every((id) => current.includes(id))) {
+        return current.filter((id) => !visibleIds.includes(id));
+      }
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  };
+
+  const saveBulkQuota = useCallback(
+    async (quotaLimit: number) => {
+      if (selectedUsers.length === 0 || isBulkSaving) {
+        return;
+      }
+      setIsBulkSaving(true);
+      setSavingQuotaIds((current) => ({
+        ...current,
+        ...Object.fromEntries(selectedUsers.map((user) => [user.id, true])),
+      }));
+      try {
+        let latestItems: WebUser[] | null = null;
+        for (const user of selectedUsers) {
+          const data = await updateWebUserQuota(user.id, quotaLimit);
+          latestItems = Array.isArray(data.items) ? data.items : latestItems;
+        }
+        if (latestItems) {
+          setUsers(latestItems);
+          setQuotaDrafts(
+            Object.fromEntries(latestItems.map((item) => [item.id, item.quota_limit < 0 ? "" : String(item.quota_limit)])),
+          );
+        } else {
+          await loadUsers();
+        }
+        toast.success(`已批量更新 ${selectedUsers.length} 个用户`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "批量更新失败";
+        toast.error(message);
+        await loadUsers();
+      } finally {
+        setSavingQuotaIds((current) => ({
+          ...current,
+          ...Object.fromEntries(selectedUsers.map((user) => [user.id, false])),
+        }));
+        setIsBulkSaving(false);
+      }
+    },
+    [isBulkSaving, loadUsers, selectedUsers],
+  );
+
+  const saveBulkFiniteQuota = useCallback(async () => {
+    const value = bulkQuotaDraft.trim();
+    if (!/^\d+$/.test(value)) {
+      toast.error("请输入 0 或更大的整数张数");
+      return;
+    }
+    await saveBulkQuota(Number(value));
+  }, [bulkQuotaDraft, saveBulkQuota]);
+
   const resetFilters = () => {
     setSearchText("");
     setRoleFilter("all");
@@ -169,6 +262,7 @@ export default function UsersPage() {
   };
 
   const hasFilters = Boolean(searchText.trim()) || roleFilter !== "all" || quotaFilter !== "all";
+  const hasSelectedUsers = selectedUsers.length > 0;
 
   if (isCheckingAuth || !session) {
     return (
