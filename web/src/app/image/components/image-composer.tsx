@@ -184,11 +184,14 @@ export function ImageComposer({
   }, []);
 
   const expandMobileComposer = useCallback(() => {
+    resetComposerPlacement();
     setIsComposerCollapsed(false);
-    window.setTimeout(() => {
-      textareaRef.current?.focus({ preventScroll: true });
-    }, 0);
-  }, [textareaRef]);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus({ preventScroll: true });
+      });
+    });
+  }, [resetComposerPlacement, textareaRef]);
 
   const collapseMobileComposer = useCallback(() => {
     if (typeof window !== "undefined" && window.innerWidth >= 640) {

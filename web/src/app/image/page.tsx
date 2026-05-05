@@ -746,7 +746,13 @@ function ImagePageContent() {
       const viewport = window.visualViewport;
       const viewportHeight = viewport?.height || window.innerHeight;
       const viewportOffsetTop = viewport?.offsetTop || 0;
-      const keyboardOffset = Math.max(0, baselineHeight - viewportHeight - viewportOffsetTop);
+      const viewportBottom = viewportOffsetTop + viewportHeight;
+      const layoutBottom = Math.max(window.innerHeight, baselineHeight || window.innerHeight);
+      const viewportOverlap = Math.max(0, layoutBottom - viewportBottom);
+      const baselineOverlap = Math.max(0, baselineHeight - viewportHeight - viewportOffsetTop);
+      const rawKeyboardOffset = Math.max(viewportOverlap, baselineOverlap);
+      const maxReasonableOffset = Math.max(0, Math.round(window.innerHeight * 0.62));
+      const keyboardOffset = Math.min(rawKeyboardOffset, maxReasonableOffset);
       root.classList.add("image-keyboard-active");
       const roundedOffset = Math.round(keyboardOffset);
       if (Math.abs(roundedOffset - lastKeyboardOffset) < 2) {

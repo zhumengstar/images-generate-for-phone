@@ -164,6 +164,9 @@
 
   @media (max-width: 639px) {
     .image-mobile-composer {
+      position: fixed;
+      inset-inline: 0;
+      bottom: 0;
       transform: translate3d(0, calc(var(--image-composer-keyboard-offset, 0px) * -1), 0);
       backface-visibility: hidden;
       contain: layout paint;
