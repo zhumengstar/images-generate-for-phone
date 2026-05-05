@@ -3,6 +3,8 @@
 import json
 import os
 import base64
+import binascii
+import hashlib
 import re
 import socket
 import time
@@ -47,6 +49,7 @@ ACTIVE_IP_TASK_LOCK = Lock()
 ACTIVE_IP_TASKS: set[str] = set()
 ACTIVE_IP_TASK_OWNERS: dict[str, str] = {}
 MAX_OWNER_QUEUED_IMAGE_TASKS = 4
+IP_IMAGE_TASK_HISTORY_LIMIT = int(os.getenv("IP_IMAGE_TASK_HISTORY_LIMIT", "120"))
 
 
 def _guest_image_quota_limit() -> int:
@@ -513,6 +516,47 @@ def _public_ip_task(task: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _task_asset_name(task_key: str, index: int) -> str:
+    digest = hashlib.sha256(task_key.encode("utf-8", errors="ignore")).hexdigest()[:24]
+    return f"{digest}-{index}.png"
+
+
+def _persist_ip_task_images(task_key: str, data: Any) -> list[dict[str, Any]]:
+    if not isinstance(data, list):
+        return []
+    output_dir = config.images_dir / "ip-tasks"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    persisted: list[dict[str, Any]] = []
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        b64_json = str(next_item.pop("b64_json", "") or "")
+        if b64_json and not next_item.get("url"):
+            try:
+                raw = base64.b64decode(b64_json, validate=False)
+            except (binascii.Error, ValueError):
+                raw = b""
+            if raw:
+                asset_name = _task_asset_name(task_key, index)
+                asset_path = output_dir / asset_name
+                asset_path.write_bytes(raw)
+                next_item["url"] = f"/images/ip-tasks/{asset_name}"
+        if next_item.get("url"):
+            persisted.append(next_item)
+    return persisted
+
+
+def _compact_ip_task_for_storage(task: dict[str, Any]) -> dict[str, Any]:
+    compact = dict(task)
+    if compact.get("data") is not None:
+        compact["data"] = _persist_ip_task_images(
+            f"{compact.get('owner') or ''}:{compact.get('id') or ''}",
+            compact.get("data"),
+        )
+    return compact
+
+
 def _encode_task_files(files: list[tuple[str, str, str, bytes]]) -> list[dict[str, str]]:
     return [
         {
@@ -612,7 +656,8 @@ def _load_partial_ip_tasks() -> dict[str, Any]:
 def _save_ip_tasks(items: dict[str, dict[str, Any]]) -> None:
     IP_IMAGE_TASKS_PATH.parent.mkdir(parents=True, exist_ok=True)
     sorted_items = sorted(items.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
-    content = json.dumps({"tasks": sorted_items[:1000]}, ensure_ascii=False, indent=2) + "\n"
+    compact_items = [_compact_ip_task_for_storage(item) for item in sorted_items[:IP_IMAGE_TASK_HISTORY_LIMIT]]
+    content = json.dumps({"tasks": compact_items}, ensure_ascii=False, indent=2) + "\n"
     tmp_path = IP_IMAGE_TASKS_PATH.with_name(f"{IP_IMAGE_TASKS_PATH.name}.{uuid.uuid4().hex}.tmp")
     try:
         tmp_path.write_text(content, encoding="utf-8")
