@@ -139,7 +139,7 @@ def _quota_subject(request: Request, ip: str, fingerprint: str) -> dict[str, obj
             role = str(identity.get("role") or "user")
             if role == "admin":
                 return {
-                    "key": f"admin|{subject_id}",
+                    "key": f"admin|{subject_id}|{fingerprint}",
                     "user_id": subject_id,
                     "name": identity.get("name") or subject_id,
                     "type": "admin",
@@ -207,11 +207,13 @@ def _save_ip_quotas(items: dict[str, int]) -> None:
 
 
 def _consume_ip_quota(quota_key: str, limit: int, count: int) -> int:
-    if limit < 0:
-        return -1
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
         used = max(0, int(items.get(quota_key, 0)))
+        if limit < 0:
+            items[quota_key] = used + count
+            _save_ip_quotas(items)
+            return -1
         remaining = max(0, limit - used)
         if count > remaining:
             raise HTTPException(
@@ -224,14 +226,6 @@ def _consume_ip_quota(quota_key: str, limit: int, count: int) -> int:
 
 
 def _refund_ip_quota(quota_key: str, count: int, quota_limit: int | None = None) -> None:
-    if quota_limit is not None and quota_limit < 0:
-        return
-    if quota_key.startswith("admin|"):
-        return
-    if quota_limit is None and quota_key.startswith("user|"):
-        user_id = quota_key.split("|", 2)[1] if "|" in quota_key else ""
-        if web_user_service.get_quota_limit(user_id, _user_image_quota_limit()) < 0:
-            return
     with IP_QUOTA_LOCK:
         items = _load_ip_quotas()
         items[quota_key] = max(0, int(items.get(quota_key, 0)) - count)

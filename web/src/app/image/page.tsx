@@ -59,6 +59,10 @@ const MOBILE_COMPOSER_MIN_TOP = 8;
 const DESKTOP_MAX_CONCURRENT_IMAGE_TASKS = 2;
 const MOBILE_MAX_CONCURRENT_IMAGE_TASKS = 1;
 const MAX_QUEUED_IMAGE_TASKS = 4;
+const REFERENCE_IMAGE_MAX_SIDE = 1600;
+const REFERENCE_IMAGE_TARGET_BYTES = 2 * 1024 * 1024;
+const REFERENCE_IMAGE_QUALITY_START = 0.86;
+const REFERENCE_IMAGE_QUALITY_MIN = 0.62;
 
 function clampImageCount(value: string) {
   return String(Math.min(2, Math.max(1, Math.floor(Number(value) || 1))));
@@ -88,7 +92,7 @@ function formatConversationTime(value: string) {
 
 function formatIpQuota(quota: IpQuotaResponse | null) {
   if (!quota) {
-    return "--/5";
+    return "--/--";
   }
   return quota.limit < 0 ? "不限" : `${quota.remaining}/${quota.limit}`;
 }
@@ -103,6 +107,13 @@ function formatIpQuotaType(quota: IpQuotaResponse | null) {
 function formatIpQuotaName(quota: IpQuotaResponse | null) {
   const name = String(quota?.name || "").trim();
   return name || formatIpQuotaType(quota);
+}
+
+function formatComposerQuota(quota: IpQuotaResponse | null) {
+  if (!quota) {
+    return "额度 --/--";
+  }
+  return `${formatIpQuotaType(quota)} ${formatIpQuota(quota)}`;
 }
 
 function createId() {
@@ -130,6 +141,142 @@ function dataUrlToFile(dataUrl: string, fileName: string, mimeType?: string) {
     bytes[index] = binary.charCodeAt(index);
   }
   return new File([bytes], fileName, { type: mimeType || matchedMimeType || "image/png" });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        reject(new Error("压缩参考图失败"));
+      },
+      type,
+      quality,
+    );
+  });
+}
+
+function normalizeReferenceImageName(name: string) {
+  const baseName = name.replace(/\.[^.]+$/, "") || "reference";
+  return `${baseName}.jpg`;
+}
+
+async function decodeImageFile(file: File) {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        draw: (context: CanvasRenderingContext2D, width: number, height: number) => {
+          context.drawImage(bitmap, 0, 0, width, height);
+        },
+        close: () => bitmap.close(),
+      };
+    } catch {
+      // Fall back to HTMLImageElement for browsers with partial createImageBitmap support.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = "async";
+  image.src = objectUrl;
+  try {
+    if (typeof image.decode === "function") {
+      await image.decode();
+    } else {
+      const fallbackImage = image as HTMLImageElement;
+      await new Promise<void>((resolve, reject) => {
+        fallbackImage.onload = () => resolve();
+        fallbackImage.onerror = () => reject(new Error("读取参考图失败"));
+      });
+    }
+    return {
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+      draw: (context: CanvasRenderingContext2D, width: number, height: number) => {
+        context.drawImage(image, 0, 0, width, height);
+      },
+      close: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
+async function compressReferenceImage(file: File) {
+  if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
+    return { file, compressed: false };
+  }
+
+  const decoded = await decodeImageFile(file);
+  try {
+    if (
+      decoded.width <= REFERENCE_IMAGE_MAX_SIDE &&
+      decoded.height <= REFERENCE_IMAGE_MAX_SIDE &&
+      file.size <= REFERENCE_IMAGE_TARGET_BYTES
+    ) {
+      return { file, compressed: false };
+    }
+
+    const scale = Math.min(1, REFERENCE_IMAGE_MAX_SIDE / Math.max(decoded.width, decoded.height));
+    const width = Math.max(1, Math.round(decoded.width * scale));
+    const height = Math.max(1, Math.round(decoded.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) {
+      return { file, compressed: false };
+    }
+
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, width, height);
+    decoded.draw(context, width, height);
+
+    let quality = REFERENCE_IMAGE_QUALITY_START;
+    let blob = await canvasToBlob(canvas, "image/jpeg", quality);
+    while (blob.size > REFERENCE_IMAGE_TARGET_BYTES && quality > REFERENCE_IMAGE_QUALITY_MIN) {
+      quality = Math.max(REFERENCE_IMAGE_QUALITY_MIN, quality - 0.08);
+      blob = await canvasToBlob(canvas, "image/jpeg", quality);
+    }
+    canvas.width = 0;
+    canvas.height = 0;
+
+    if (blob.size >= file.size && file.size <= REFERENCE_IMAGE_TARGET_BYTES) {
+      return { file, compressed: false };
+    }
+
+    return {
+      file: new File([blob], normalizeReferenceImageName(file.name), {
+        type: "image/jpeg",
+        lastModified: Date.now(),
+      }),
+      compressed: true,
+    };
+  } finally {
+    decoded.close();
+  }
+}
+
+function waitForUiThread() {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
+async function compressReferenceImages(files: File[]) {
+  const results: Awaited<ReturnType<typeof compressReferenceImage>>[] = [];
+  for (const file of files) {
+    results.push(await compressReferenceImage(file));
+    await waitForUiThread();
+  }
+  return results;
 }
 
 function buildReferenceImageFromResult(image: StoredImage, fileName: string): StoredReferenceImage | null {
@@ -169,20 +316,25 @@ async function recallImageResult(image: ImageResponse["data"][number]) {
 async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
   const direct = buildReferenceImageFromResult(image, fileName);
   if (direct) {
+    const { file } = await compressReferenceImage(dataUrlToFile(direct.dataUrl, direct.name, direct.type));
     return {
-      referenceImage: direct,
-      file: dataUrlToFile(direct.dataUrl, direct.name, direct.type),
+      referenceImage: {
+        name: file.name,
+        type: file.type || "image/jpeg",
+        dataUrl: await readFileAsDataUrl(file),
+      },
+      file,
     };
   }
 
   if (!image.url) {
     return null;
   }
-  const file = await fetchImageAsFile(image.url, fileName);
+  const { file } = await compressReferenceImage(await fetchImageAsFile(image.url, fileName));
   return {
     referenceImage: {
       name: file.name,
-      type: file.type || "image/png",
+      type: file.type || "image/jpeg",
       dataUrl: await readFileAsDataUrl(file),
     },
     file,
@@ -1163,16 +1315,21 @@ function ImagePageContent() {
     }
 
     try {
+      const compressedResults = await compressReferenceImages(files);
+      const nextFiles = compressedResults.map((item) => item.file);
       const previews = await Promise.all(
-        files.map(async (file) => ({
+        nextFiles.map(async (file) => ({
           name: file.name,
-          type: file.type || "image/png",
+          type: file.type || "image/jpeg",
           dataUrl: await readFileAsDataUrl(file),
         })),
       );
 
-      setReferenceImageFiles((prev) => [...prev, ...files]);
+      setReferenceImageFiles((prev) => [...prev, ...nextFiles]);
       setReferenceImages((prev) => [...prev, ...previews]);
+      if (compressedResults.some((item) => item.compressed)) {
+        toast.success("参考图已压缩后上传");
+      }
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -1251,10 +1408,17 @@ function ImagePageContent() {
       try {
         const nextReference =
           "dataUrl" in image
-            ? {
-                referenceImage: image,
-                file: dataUrlToFile(image.dataUrl, image.name, image.type),
-              }
+            ? await (async () => {
+                const { file } = await compressReferenceImage(dataUrlToFile(image.dataUrl, image.name, image.type));
+                return {
+                  referenceImage: {
+                    name: file.name,
+                    type: file.type || "image/jpeg",
+                    dataUrl: await readFileAsDataUrl(file),
+                  },
+                  file,
+                };
+              })()
             : await buildReferenceImageFromStoredImage(image, `conversation-${conversationId}-${Date.now()}.png`);
         if (!nextReference) {
           return;
@@ -1378,13 +1542,17 @@ function ImagePageContent() {
                 existingTask ??
                 (async () => {
                   if (activeTurn.mode === "edit") {
-                    const editFiles = activeTurn.referenceImages.map((referenceImage, referenceIndex) =>
-                      dataUrlToFile(
-                        referenceImage.dataUrl,
-                        referenceImage.name || `reference-${referenceIndex + 1}.png`,
-                        referenceImage.type,
-                      ),
-                    );
+                    const editFiles = (
+                      await compressReferenceImages(
+                        activeTurn.referenceImages.map((referenceImage, referenceIndex) =>
+                          dataUrlToFile(
+                            referenceImage.dataUrl,
+                            referenceImage.name || `reference-${referenceIndex + 1}.png`,
+                            referenceImage.type,
+                          ),
+                        ),
+                      )
+                    ).map((item) => item.file);
                     if (editFiles.length === 0) {
                       throw new Error("缂栬緫浠诲姟缂哄皯鍙傝€冨浘锛岃閲嶆柊涓婁紶鍥剧墖");
                     }
@@ -1962,7 +2130,7 @@ function ImagePageContent() {
               prompt={imagePrompt}
               imageCount={imageCount}
               imageSize={imageSize}
-              quotaLabel={formatIpQuota(ipQuota)}
+              quotaLabel={formatComposerQuota(ipQuota)}
               queuedTaskCount={taskStats.queued}
               runningTaskCount={taskStats.running}
               isPolishingPrompt={isPolishingPrompt}

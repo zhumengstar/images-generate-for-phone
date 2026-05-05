@@ -279,7 +279,17 @@ class WebUserService:
             is_admin = public.get("role") == "admin"
             is_guest = public.get("role") == "guest"
             quota_limit = -1 if is_admin else self._quota_limit_for_item(item, guest_limit if is_guest else user_limit)
-            if is_guest:
+            if is_admin:
+                device_usages = [
+                    {
+                        "device": key.rsplit("|", 1)[-1] if "|" in key else "unknown",
+                        "used": max(0, int(value or 0)),
+                        "remaining": -1,
+                    }
+                    for key, value in quota_items.items()
+                    if key == f"admin|{user_id}" or key.startswith(f"admin|{user_id}|")
+                ]
+            elif is_guest:
                 guest_fingerprint = _clean(item.get("device_fingerprint"))
                 device_usages = [
                     {
@@ -308,7 +318,7 @@ class WebUserService:
                     **public,
                     "username": public.get("name"),
                     "active_sessions": 0 if is_guest else len(sessions),
-                    "device_count": 0 if is_admin else len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages} | ({_clean(item.get("device_fingerprint"))} if is_guest else set())),
+                    "device_count": len({str(usage["device"]) for usage in device_usages}) if is_admin else len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages} | ({_clean(item.get("device_fingerprint"))} if is_guest else set())),
                     "used_total": used_total,
                     "quota_limit": quota_limit,
                     "remaining_total": -1 if quota_limit < 0 else max(0, quota_limit - used_total),

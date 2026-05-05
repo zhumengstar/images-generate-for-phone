@@ -1,4 +1,4 @@
-import { httpRequest } from "@/lib/request";
+import { httpRequest, resolveApiBaseUrl } from "@/lib/request";
 import { getDeviceFingerprint } from "@/lib/device";
 import { getStoredAuthKey } from "@/store/auth";
 
@@ -137,6 +137,10 @@ type ImageTaskListResponse = {
   items: ImageTask[];
   missing_ids: string[];
 };
+
+function apiFetchUrl(path: string) {
+  return `${resolveApiBaseUrl()}${path}`;
+}
 
 export type LoginResponse = {
   ok: boolean;
@@ -284,7 +288,8 @@ export async function login(authKey: string, credentials?: { username: string; p
   if (normalizedAuthKey) {
     headers.Authorization = `Bearer ${normalizedAuthKey}`;
   }
-  const response = await fetch("/auth/login", {
+  const apiBaseUrl = resolveApiBaseUrl();
+  const response = await fetch(`${apiBaseUrl}/auth/login`, {
     method: "POST",
     headers,
     cache: "no-store",
@@ -350,7 +355,7 @@ export async function updateAccount(
 export async function generateImage(prompt: string, model?: ImageModel, size?: string) {
   const authKey = await getStoredAuthKey();
   const deviceFingerprint = await getDeviceFingerprint();
-  const response = await fetch("/api/ip-limited/images/generations", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/images/generations"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -383,7 +388,7 @@ export async function generateImage(prompt: string, model?: ImageModel, size?: s
 
 export async function fetchIpQuota() {
   const authKey = await getStoredAuthKey();
-  const response = await fetch("/api/ip-limited/quota", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/quota"), {
     cache: "no-store",
     headers: {
       "Cache-Control": "no-cache",
@@ -400,7 +405,7 @@ export async function fetchIpQuota() {
 
 export async function refundIpQuota(count = 1) {
   const authKey = await getStoredAuthKey();
-  const response = await fetch("/api/ip-limited/quota/refund", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/quota/refund"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -420,7 +425,7 @@ export async function refundIpQuota(count = 1) {
 
 export async function createImageShareLink() {
   const authKey = await getStoredAuthKey();
-  const response = await fetch("/api/ip-limited/share-link", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/share-link"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -446,7 +451,7 @@ export async function createImageShareLink() {
 
 export async function redeemImageShareLink(code: string) {
   const authKey = await getStoredAuthKey();
-  const response = await fetch("/api/ip-limited/share-link/redeem", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/share-link/redeem"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -473,7 +478,7 @@ export async function redeemImageShareLink(code: string) {
 export async function polishImagePrompt(prompt: string, mode: "generate" | "edit" = "generate") {
   const authKey = await getStoredAuthKey();
   const deviceFingerprint = await getDeviceFingerprint();
-  const response = await fetch("/api/ip-limited/prompt-polish", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/prompt-polish"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -516,7 +521,7 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
   formData.append("n", String(Math.min(2, Math.max(1, Math.floor(count) || 1))));
   formData.append("response_format", "url");
 
-  const response = await fetch("/api/ip-limited/images/edits", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/images/edits"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -542,7 +547,7 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
 export async function createImageGenerationTask(clientTaskId: string, prompt: string, model?: ImageModel, size?: string) {
   const authKey = await getStoredAuthKey();
   const deviceFingerprint = await getDeviceFingerprint();
-  const response = await fetch("/api/ip-limited/image-tasks/generations", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/image-tasks/generations"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -595,7 +600,7 @@ export async function createImageEditTask(
     formData.append("size", size);
   }
 
-  const response = await fetch("/api/ip-limited/image-tasks/edits", {
+  const response = await fetch(apiFetchUrl("/api/ip-limited/image-tasks/edits"), {
     method: "POST",
     cache: "no-store",
     headers: {
@@ -624,7 +629,7 @@ export async function fetchImageTasks(ids: string[]) {
   if (ids.length > 0) {
     params.set("ids", ids.join(","));
   }
-  const response = await fetch(`/api/ip-limited/image-tasks${params.toString() ? `?${params.toString()}` : ""}`, {
+  const response = await fetch(apiFetchUrl(`/api/ip-limited/image-tasks${params.toString() ? `?${params.toString()}` : ""}`), {
     cache: "no-store",
     headers: {
       "Cache-Control": "no-cache",

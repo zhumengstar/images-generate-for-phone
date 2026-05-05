@@ -56,6 +56,7 @@ function formatSession(user: WebUser) {
 
 type RoleFilter = "all" | WebUser["role"];
 type QuotaFilter = "all" | "limited" | "unlimited" | "used";
+type UsedSort = "none" | "desc" | "asc";
 
 export default function UsersPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin"]);
@@ -64,6 +65,7 @@ export default function UsersPage() {
   const [searchText, setSearchText] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [quotaFilter, setQuotaFilter] = useState<QuotaFilter>("all");
+  const [usedSort, setUsedSort] = useState<UsedSort>("none");
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [bulkQuotaDraft, setBulkQuotaDraft] = useState("");
   const [isBulkSaving, setIsBulkSaving] = useState(false);
@@ -235,9 +237,22 @@ export default function UsersPage() {
     });
   }, [quotaFilter, roleFilter, searchText, users]);
 
+  const displayedUsers = useMemo(() => {
+    if (usedSort === "none") {
+      return filteredUsers;
+    }
+    return [...filteredUsers].sort((left, right) => {
+      const diff = Math.max(0, left.used_total) - Math.max(0, right.used_total);
+      if (diff !== 0) {
+        return usedSort === "asc" ? diff : -diff;
+      }
+      return String(left.username || left.name || left.id).localeCompare(String(right.username || right.name || right.id));
+    });
+  }, [filteredUsers, usedSort]);
+
   const selectableFilteredUsers = useMemo(
-    () => filteredUsers.filter((user) => user.role !== "admin"),
-    [filteredUsers],
+    () => displayedUsers.filter((user) => user.role !== "admin"),
+    [displayedUsers],
   );
 
   const selectedUsers = useMemo(
@@ -268,6 +283,10 @@ export default function UsersPage() {
       }
       return Array.from(new Set([...current, ...visibleIds]));
     });
+  };
+
+  const toggleUsedSort = () => {
+    setUsedSort((current) => (current === "none" ? "desc" : current === "desc" ? "asc" : "none"));
   };
 
   const deleteSelectedUsers = useCallback(async () => {
@@ -399,18 +418,62 @@ export default function UsersPage() {
               </span>
             ))}
           </div>
-          <Button
-            variant="outline"
-            className="h-9 rounded-xl border-stone-200 bg-white px-3"
-            onClick={() => void loadUsers()}
-            disabled={isLoading}
-          >
-            {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-            刷新
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="hidden shrink-0 items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-1.5 shadow-sm md:flex">
+              <span className="whitespace-nowrap text-sm font-semibold text-stone-800">默认额度</span>
+              <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
+                用户
+                <Input
+                  className="h-8 w-20 rounded-xl border-stone-200 bg-white text-sm xl:w-24"
+                  inputMode="numeric"
+                  min={0}
+                  type="number"
+                  value={defaultQuotaDrafts.user_image_quota_limit}
+                  disabled={isSavingDefaultQuotas}
+                  onChange={(event) =>
+                    setDefaultQuotaDrafts((current) => ({ ...current, user_image_quota_limit: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
+                访客
+                <Input
+                  className="h-8 w-20 rounded-xl border-stone-200 bg-white text-sm xl:w-24"
+                  inputMode="numeric"
+                  min={0}
+                  type="number"
+                  value={defaultQuotaDrafts.guest_image_quota_limit}
+                  disabled={isSavingDefaultQuotas}
+                  onChange={(event) =>
+                    setDefaultQuotaDrafts((current) => ({ ...current, guest_image_quota_limit: event.target.value }))
+                  }
+                />
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 whitespace-nowrap rounded-xl border-stone-200 bg-white px-3"
+                disabled={isSavingDefaultQuotas}
+                onClick={() => void saveDefaultQuotas()}
+              >
+                {isSavingDefaultQuotas ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+                保存默认
+              </Button>
+              <span className="hidden whitespace-nowrap text-xs text-stone-400 xl:inline">仅影响未单独设置额度的用户</span>
+            </div>
+            <Button
+              variant="outline"
+              className="h-9 rounded-xl border-stone-200 bg-white px-3"
+              onClick={() => void loadUsers()}
+              disabled={isLoading}
+            >
+              {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+              刷新
+            </Button>
+          </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-2 shadow-sm">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-2 shadow-sm md:hidden">
           <span className="whitespace-nowrap text-sm font-semibold text-stone-800">默认额度</span>
           <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
             用户
@@ -611,10 +674,10 @@ export default function UsersPage() {
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-auto">
-                <table className="w-full min-w-[1320px] border-collapse text-left text-sm">
+                <table className="w-full min-w-[1380px] border-collapse text-left text-sm md:text-center">
                   <thead className="sticky top-0 z-10 border-b border-stone-100 bg-stone-50 text-xs font-semibold text-stone-500">
                     <tr>
-                      <th className="w-12 whitespace-nowrap px-5 py-3">
+                      <th className="w-12 whitespace-nowrap px-5 py-3 md:text-center">
                         <input
                           type="checkbox"
                           className="size-4 rounded border-stone-300 accent-stone-950"
@@ -624,20 +687,33 @@ export default function UsersPage() {
                           aria-label="全选当前筛选用户"
                         />
                       </th>
-                      <th className="whitespace-nowrap px-5 py-3">用户</th>
-                      <th className="whitespace-nowrap px-5 py-3">角色</th>
-                      <th className="whitespace-nowrap px-5 py-3">会话</th>
-                      <th className="whitespace-nowrap px-5 py-3">可用额度</th>
-                      <th className="whitespace-nowrap px-5 py-3">图片额度</th>
-                      <th className="whitespace-nowrap px-5 py-3">最后登录</th>
-                      <th className="whitespace-nowrap px-5 py-3">创建时间</th>
-                      <th className="whitespace-nowrap px-5 py-3 text-right">操作</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">用户</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">角色</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">会话</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">可用额度</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg px-1 py-0.5 transition hover:bg-stone-100 hover:text-stone-950"
+                          onClick={toggleUsedSort}
+                          aria-label="按使用额度排序"
+                        >
+                          使用额度
+                          <span className="text-[10px] text-stone-400">
+                            {usedSort === "desc" ? "↓" : usedSort === "asc" ? "↑" : "↕"}
+                          </span>
+                        </button>
+                      </th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">图片额度</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">最后登录</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">创建时间</th>
+                      <th className="whitespace-nowrap px-5 py-3 text-right md:text-center">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
-                    {filteredUsers.map((user) => (
-                      <tr key={user.id} className={cn("align-top", selectedUserIds.includes(user.id) && "bg-stone-50")}>
-                        <td className="px-5 py-3">
+                    {displayedUsers.map((user) => (
+                      <tr key={user.id} className={cn("align-top md:align-middle", selectedUserIds.includes(user.id) && "bg-stone-50")}>
+                        <td className="px-5 py-4 md:text-center">
                           <input
                             type="checkbox"
                             className="size-4 rounded border-stone-300 accent-stone-950"
@@ -647,8 +723,8 @@ export default function UsersPage() {
                             aria-label={`选择 ${user.username || user.name}`}
                           />
                         </td>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-2">
+                        <td className="px-5 py-4 md:text-center">
+                          <div className="flex items-center gap-2 md:justify-center">
                             <div className="inline-flex size-8 items-center justify-center rounded-full bg-stone-100 text-stone-500">
                               {user.role === "admin" ? <ShieldCheck className="size-4" /> : <UserRound className="size-4" />}
                             </div>
@@ -657,7 +733,7 @@ export default function UsersPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-3">
+                        <td className="px-5 py-4 md:text-center">
                           <span
                             className={cn(
                               "inline-flex whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold",
@@ -667,22 +743,25 @@ export default function UsersPage() {
                             {roleLabel(user.role)}
                           </span>
                         </td>
-                        <td className="whitespace-nowrap px-5 py-3 text-stone-600">
+                        <td className="whitespace-nowrap px-5 py-4 text-stone-600 md:text-center">
                           {formatSession(user)}
                         </td>
-                        <td className="px-5 py-3">
+                        <td className="px-5 py-4 md:text-center">
                           <div className="whitespace-nowrap font-semibold text-stone-950">
                             {formatUserQuota(user)}
                           </div>
                         </td>
-                        <td className="px-5 py-3">
+                        <td className="whitespace-nowrap px-5 py-4 font-semibold text-stone-950 md:text-center">
+                          {Math.max(0, user.used_total)}
+                        </td>
+                        <td className="px-5 py-4 md:text-center">
                           {user.role === "admin" ? (
                             <span className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full bg-stone-100 px-3 text-xs font-semibold text-stone-600">
                               <Infinity className="size-4" />
                               无限
                             </span>
                           ) : (
-                            <div className="flex min-w-[250px] items-center gap-2 whitespace-nowrap">
+                            <div className="flex min-w-[250px] items-center gap-2 whitespace-nowrap md:justify-center">
                               <Input
                                 className="h-9 w-28 rounded-xl border-stone-200 bg-white text-sm"
                                 inputMode="numeric"
@@ -722,9 +801,9 @@ export default function UsersPage() {
                             </div>
                           )}
                         </td>
-                        <td className="whitespace-nowrap px-5 py-3 text-stone-600">{formatTime(user.last_used_at)}</td>
-                        <td className="whitespace-nowrap px-5 py-3 text-stone-600">{formatTime(user.created_at)}</td>
-                        <td className="whitespace-nowrap px-5 py-3 text-right">
+                        <td className="whitespace-nowrap px-5 py-4 text-stone-600 md:text-center">{formatTime(user.last_used_at)}</td>
+                        <td className="whitespace-nowrap px-5 py-4 text-stone-600 md:text-center">{formatTime(user.created_at)}</td>
+                        <td className="whitespace-nowrap px-5 py-4 text-right md:text-center">
                           {user.role === "admin" ? (
                             <span className="text-xs font-medium text-stone-300">--</span>
                           ) : (

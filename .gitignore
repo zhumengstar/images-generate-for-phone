@@ -34,3 +34,4 @@ server.*.log
 generated-test.png
 tmp/
 web-out.zip
+backups/

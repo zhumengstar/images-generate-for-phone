@@ -148,17 +148,18 @@ export function ImageComposer({
   const composerRootRef = useRef<HTMLDivElement | null>(null);
   const shouldExpandPromptInput = prompt.trim().length > 80 || prompt.includes("\n");
 
-  const markPromptFocused = useCallback(() => {
-    if (typeof window === "undefined" || window.innerWidth >= 640) {
-      return;
-    }
-
-    document.documentElement.classList.add("image-keyboard-active");
-  }, []);
-
   const resetComposerPlacement = useCallback(() => {
     document.documentElement.classList.remove("image-keyboard-active");
     document.documentElement.style.setProperty("--image-composer-keyboard-offset", "0px");
+  }, []);
+
+  const focusPromptWithoutPageScroll = useCallback((event: PointerEvent<HTMLTextAreaElement>) => {
+    if (typeof window === "undefined" || window.innerWidth >= 640 || document.activeElement === event.currentTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
   }, []);
 
   const expandMobileComposer = useCallback(() => {
@@ -398,9 +399,22 @@ export function ImageComposer({
                       void onSubmit();
                     }
                   }}
-                  className="absolute inset-x-0 top-0 bottom-[60px] min-h-0 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-6 pt-3 pb-1 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 lg:px-5 lg:pt-2"
+                  className="absolute inset-x-0 top-0 bottom-[60px] min-h-0 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-6 pt-3 pr-32 pb-1 text-[15px] leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-0 lg:px-5 lg:pt-2 lg:pr-32"
                   style={{ minHeight: 0 }}
                 />
+                <button
+                  type="button"
+                  className="absolute right-4 top-3 z-10 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50/95 px-3 text-xs font-medium text-amber-700 shadow-sm backdrop-blur transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 lg:right-5 lg:top-2"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onPolishPrompt();
+                  }}
+                  disabled={!prompt.trim() || isPolishingPrompt}
+                  aria-label="AI润色"
+                >
+                  {isPolishingPrompt ? <LoaderCircle className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                  <span className="whitespace-nowrap">AI润色</span>
+                </button>
                 <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 border-t border-stone-100 bg-white px-6 py-2 lg:px-5">
                   <div className="flex min-w-0 flex-1 items-center gap-3 overflow-visible">
                     <button
@@ -418,7 +432,7 @@ export function ImageComposer({
                     </button>
                     {quotaLabel ? (
                       <div className="inline-flex h-9 shrink-0 items-center rounded-full bg-stone-950 px-3 text-xs font-medium text-white lg:px-4">
-                        <span className="font-mono tracking-normal lg:text-[13px]">{quotaLabel}</span>
+                        <span className="whitespace-nowrap tracking-normal lg:text-[13px]">{quotaLabel}</span>
                       </div>
                     ) : null}
                     <div className="flex h-9 shrink-0 items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-1 lg:px-4">
@@ -549,12 +563,7 @@ export function ImageComposer({
                 ref={textareaRef}
                 value={prompt}
                 onChange={(event) => onPromptChange(event.target.value)}
-                onFocus={() => {
-                  markPromptFocused();
-                }}
-                onBlur={() => {
-                  resetComposerPlacement();
-                }}
+                onPointerDown={focusPromptWithoutPageScroll}
                 placeholder="输入你想要生成的画面"
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
@@ -677,7 +686,7 @@ export function ImageComposer({
                   </button>
                   {quotaLabel ? (
                     <div className="hidden h-9 shrink-0 items-center rounded-full bg-stone-950 px-3 text-xs font-medium text-white sm:inline-flex lg:px-4">
-                      <span className="font-mono tracking-normal lg:text-[13px]">{quotaLabel}</span>
+                      <span className="whitespace-nowrap tracking-normal lg:text-[13px]">{quotaLabel}</span>
                     </div>
                   ) : null}
                   {runningTaskCount > 0 && (
