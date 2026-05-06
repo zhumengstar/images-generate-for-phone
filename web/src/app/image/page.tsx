@@ -292,7 +292,7 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
 }
 
 async function fetchImageAsFile(url: string, fileName: string) {
-  const response = await fetch(normalizeImageUrl(url) || url, {
+  const response = await fetch(referenceFetchUrl(url), {
     cache: "no-store",
     headers: {
       "Cache-Control": "no-cache",
@@ -314,6 +314,14 @@ function normalizeImageUrl(url?: string) {
     return `https://${url.slice("http://".length)}`;
   }
   return url;
+}
+
+function referenceFetchUrl(url: string) {
+  const normalized = normalizeImageUrl(url) || url;
+  if (normalized.startsWith("https://generate.muling.store/images/")) {
+    return `/api/ip-limited/image-proxy?url=${encodeURIComponent(normalized)}`;
+  }
+  return normalized;
 }
 
 async function recallImageResult(image: ImageResponse["data"][number]) {
@@ -2182,6 +2190,7 @@ function ImagePageContent() {
               <ImageResults
                 selectedConversation={deferredSelectedConversation}
                 onOpenLightbox={openLightbox}
+                onEditImage={handleContinueEdit}
                 onDeleteFailedImage={handleDeleteFailedImage}
                 formatConversationTime={formatConversationTime}
               />

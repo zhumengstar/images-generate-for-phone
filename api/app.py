@@ -25,6 +25,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from api import accounts, ai, image_tasks, register, system
@@ -372,6 +373,15 @@ def _image_request_headers(headers: dict[str, str]) -> dict[str, str]:
         for key, value in headers.items()
         if key.lower() in {"authorization", "x-device-fingerprint", "x-forwarded-for"}
     }
+
+
+def _assert_allowed_proxy_image_url(url: str) -> str:
+    resolved = _proxy_image_url(url)
+    parsed = urllib.parse.urlparse(resolved)
+    proxy = urllib.parse.urlparse(IMAGE_PROXY_BASE_URL)
+    if parsed.scheme not in {"http", "https"} or parsed.netloc != proxy.netloc or not parsed.path.startswith("/images/"):
+        raise HTTPException(status_code=400, detail={"error": "unsupported image url"})
+    return resolved
 
 
 def _persist_image_item(item: Any, headers: dict[str, str], output_dir: Path, asset_name: str) -> Any:
@@ -1290,6 +1300,26 @@ def create_app() -> FastAPI:
         ip = _client_ip(request)
         fingerprint = _device_fingerprint(request)
         return _ip_quota_payload(request, ip, fingerprint)
+
+    @app.get("/api/ip-limited/image-proxy")
+    async def proxy_ip_limited_image(url: str):
+        image_url = _assert_allowed_proxy_image_url(url)
+        request = urllib.request.Request(
+            image_url,
+            headers={"Accept": "image/*", "User-Agent": "curl/8.0.1"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+                content = _read_limited_response(response, IMAGE_EDIT_MAX_UPLOAD_BYTES)
+                content_type = response.headers.get("Content-Type") or "image/png"
+        except urllib.error.HTTPError as exc:
+            return JSONResponse(status_code=exc.code, content={"error": "读取图片失败"})
+        except Exception:
+            return JSONResponse(status_code=502, content={"error": "读取图片失败"})
+        if not content_type.lower().startswith("image/"):
+            return JSONResponse(status_code=400, content={"error": "不是有效图片"})
+        return Response(content=content, media_type=content_type)
 
     @app.post("/api/ip-limited/quota/refund")
     async def refund_ip_quota(request: Request):

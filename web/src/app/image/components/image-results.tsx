@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useState, type CSSProperties } from "react";
-import { Clock3, LoaderCircle, Trash2 } from "lucide-react";
+import { Clock3, ImagePlus, LoaderCircle, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { ImageConversation, ImageTurnStatus, StoredImage } from "@/store/image-conversations";
@@ -16,6 +16,7 @@ export type ImageLightboxItem = {
 type ImageResultsProps = {
   selectedConversation: ImageConversation | null;
   onOpenLightbox: (images: ImageLightboxItem[], index: number) => void;
+  onEditImage: (conversationId: string, image: StoredImage) => void | Promise<void>;
   onDeleteFailedImage: (conversationId: string, turnId: string, imageId: string) => void | Promise<void>;
   formatConversationTime: (value: string) => string;
 };
@@ -102,6 +103,7 @@ function StoredImageElement({
 function ImageResultsComponent({
   selectedConversation,
   onOpenLightbox,
+  onEditImage,
   onDeleteFailedImage,
   formatConversationTime,
 }: ImageResultsProps) {
@@ -301,6 +303,14 @@ function ImageResultsComponent({
                               </button>
                             </div>
                             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 sm:mt-0 sm:justify-end">
+                              <button
+                                type="button"
+                                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-stone-950 px-2.5 text-[11px] font-medium text-white shadow-sm transition hover:bg-stone-800"
+                                onClick={() => void onEditImage(selectedConversation.id, image)}
+                              >
+                                <ImagePlus className="size-3.5" />
+                                编辑图片
+                              </button>
                               {imageMeta ? <span className="min-w-0 break-words text-stone-400 sm:truncate">{imageMeta}</span> : null}
                             </div>
                           </div>
