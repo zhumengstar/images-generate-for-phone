@@ -43,7 +43,7 @@ function roleLabel(role: WebUser["role"]) {
 }
 
 function formatUserQuota(user: WebUser) {
-  return user.quota_limit < 0 ? "不限" : `${user.remaining_total}/${user.quota_limit}`;
+  return user.quota_limit < 0 ? "无限" : `${user.remaining_total}/${user.quota_limit}`;
 }
 
 function formatSession(user: WebUser) {

@@ -94,7 +94,7 @@ function formatIpQuota(quota: IpQuotaResponse | null) {
   if (!quota) {
     return "--/--";
   }
-  return quota.limit < 0 ? "不限" : `${quota.remaining}/${quota.limit}`;
+  return quota.limit < 0 ? "无限" : `${quota.remaining}/${quota.limit}`;
 }
 
 function formatIpQuotaType(quota: IpQuotaResponse | null) {
@@ -1810,6 +1810,56 @@ function ImagePageContent() {
       void runConversationQueue(nextConversation.id);
     });
   }, [conversations, runConversationQueue]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let cancelled = false;
+    let syncing = false;
+
+    const syncPendingTasks = async () => {
+      if (syncing) {
+        return;
+      }
+      const current = conversationsRef.current;
+      const currentStats = getImageTaskStats(current);
+      if (currentStats.queued + currentStats.running === 0) {
+        return;
+      }
+
+      syncing = true;
+      try {
+        const next = await syncConversationImageTasks(current);
+        if (cancelled) {
+          return;
+        }
+        const changed =
+          next.length !== current.length || next.some((conversation, index) => conversation !== current[index]);
+        if (changed) {
+          conversationsRef.current = next;
+          setConversations(next);
+          const nextStats = getImageTaskStats(next);
+          if (nextStats.queued + nextStats.running === 0) {
+            void loadIpQuota();
+          }
+        }
+      } finally {
+        syncing = false;
+      }
+    };
+
+    void syncPendingTasks();
+    const timer = window.setInterval(() => {
+      void syncPendingTasks();
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadIpQuota]);
 
   const handleSubmit = async () => {
     const prompt = imagePrompt.trim();
