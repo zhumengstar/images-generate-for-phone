@@ -292,7 +292,7 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
 }
 
 async function fetchImageAsFile(url: string, fileName: string) {
-  const response = await fetch(url, {
+  const response = await fetch(normalizeImageUrl(url) || url, {
     cache: "no-store",
     headers: {
       "Cache-Control": "no-cache",
@@ -306,9 +306,22 @@ async function fetchImageAsFile(url: string, fileName: string) {
   return new File([blob], fileName, { type: blob.type || "image/png" });
 }
 
+function normalizeImageUrl(url?: string) {
+  if (!url) {
+    return url;
+  }
+  if (url.startsWith("http://generate.muling.store/")) {
+    return `https://${url.slice("http://".length)}`;
+  }
+  return url;
+}
+
 async function recallImageResult(image: ImageResponse["data"][number]) {
   if (image.b64_json || image.url) {
-    return image;
+    return {
+      ...image,
+      url: normalizeImageUrl(image.url),
+    };
   }
   throw new Error("接口没有返回图片数据");
 }
@@ -357,7 +370,7 @@ function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage
       taskId: task.id,
       status: "success",
       b64_json: first.b64_json,
-      url: first.url,
+      url: normalizeImageUrl(first.url),
       revised_prompt: first.revised_prompt,
       error: undefined,
     };

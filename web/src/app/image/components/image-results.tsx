@@ -24,7 +24,14 @@ function getStoredImageSrc(image: StoredImage) {
   if (image.b64_json) {
     return `data:image/png;base64,${image.b64_json}`;
   }
-  return withImageCacheKey(image.url || "", image.taskId || image.id);
+  return withImageCacheKey(normalizeImageUrl(image.url || ""), image.taskId || image.id);
+}
+
+function normalizeImageUrl(url: string) {
+  if (url.startsWith("http://generate.muling.store/")) {
+    return `https://${url.slice("http://".length)}`;
+  }
+  return url;
 }
 
 function withImageCacheKey(url: string, cacheKey: string) {

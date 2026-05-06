@@ -357,7 +357,13 @@ def _usable_image_count(data: dict[str, Any]) -> int:
 
 
 def _proxy_image_url(url: str) -> str:
-    return urllib.parse.urljoin(f"{IMAGE_PROXY_BASE_URL}/", url)
+    resolved = urllib.parse.urljoin(f"{IMAGE_PROXY_BASE_URL}/", url)
+    parsed = urllib.parse.urlparse(resolved)
+    proxy = urllib.parse.urlparse(IMAGE_PROXY_BASE_URL)
+    if parsed.scheme == "http" and proxy.scheme == "https" and parsed.netloc == proxy.netloc:
+        parsed = parsed._replace(scheme="https")
+        return urllib.parse.urlunparse(parsed)
+    return resolved
 
 
 def _image_request_headers(headers: dict[str, str]) -> dict[str, str]:
