@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Infinity, LoaderCircle, RefreshCw, Save, Search, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { Infinity, LoaderCircle, LogOut, RefreshCw, Save, Search, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,13 @@ import {
   fetchWebUsers,
   updateWebUserDefaultQuotas,
   updateWebUserQuota,
+  updateWebUserRole,
   type WebUser,
   type WebUsersResponse,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
+import { clearStoredAuthSession } from "@/store/auth";
 
 function formatTime(value: string | null) {
   if (!value) {
@@ -56,7 +58,8 @@ function formatSession(user: WebUser) {
 
 type RoleFilter = "all" | WebUser["role"];
 type QuotaFilter = "all" | "limited" | "unlimited" | "used";
-type UsedSort = "none" | "desc" | "asc";
+type SortField = "none" | "used" | "last_used_at" | "created_at";
+type SortDirection = "desc" | "asc";
 
 export default function UsersPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin"]);
@@ -65,7 +68,10 @@ export default function UsersPage() {
   const [searchText, setSearchText] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [quotaFilter, setQuotaFilter] = useState<QuotaFilter>("all");
-  const [usedSort, setUsedSort] = useState<UsedSort>("none");
+  const [sortState, setSortState] = useState<{ field: SortField; direction: SortDirection }>({
+    field: "none",
+    direction: "desc",
+  });
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [bulkQuotaDraft, setBulkQuotaDraft] = useState("");
   const [isBulkSaving, setIsBulkSaving] = useState(false);
@@ -73,6 +79,7 @@ export default function UsersPage() {
   const [viewportHeight, setViewportHeight] = useState(0);
   const [quotaDrafts, setQuotaDrafts] = useState<Record<string, string>>({});
   const [savingQuotaIds, setSavingQuotaIds] = useState<Record<string, boolean>>({});
+  const [savingRoleIds, setSavingRoleIds] = useState<Record<string, boolean>>({});
   const [deletingUserIds, setDeletingUserIds] = useState<Record<string, boolean>>({});
   const [defaultQuotaDrafts, setDefaultQuotaDrafts] = useState({
     user_image_quota_limit: "20",
@@ -161,8 +168,36 @@ export default function UsersPage() {
     [quotaDrafts, saveUserQuota],
   );
 
+  const saveUserRole = useCallback(async (user: WebUser, role: "admin" | "user") => {
+    if (user.role === "guest" || savingRoleIds[user.id] || isBulkDeleting) {
+      return;
+    }
+    const displayName = user.username || user.name || user.id;
+    const actionText = role === "admin" ? "设置为管理员" : "设置为普通用户";
+    if (!window.confirm(`确认将「${displayName}」${actionText}？`)) {
+      return;
+    }
+    setSavingRoleIds((current) => ({ ...current, [user.id]: true }));
+    try {
+      const data = await updateWebUserRole(user.id, role);
+      applyWebUsersData(data);
+      setSelectedUserIds((current) => (role === "admin" ? current.filter((id) => id !== user.id) : current));
+      toast.success(role === "admin" ? "已设置为管理员" : "已设置为普通用户");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存用户权限失败");
+    } finally {
+      setSavingRoleIds((current) => ({ ...current, [user.id]: false }));
+    }
+  }, [applyWebUsersData, isBulkDeleting, savingRoleIds]);
+
   const clearSelectedUsers = useCallback(() => {
     setSelectedUserIds([]);
+  }, []);
+
+  const logout = useCallback(async () => {
+    await clearStoredAuthSession();
+    toast.success("已退出，当前设备切换为访客");
+    window.location.replace("/");
   }, []);
 
   const deleteUser = useCallback(async (user: WebUser) => {
@@ -238,17 +273,43 @@ export default function UsersPage() {
   }, [quotaFilter, roleFilter, searchText, users]);
 
   const displayedUsers = useMemo(() => {
-    if (usedSort === "none") {
+    if (sortState.field === "none") {
       return filteredUsers;
     }
+
+    const getSortValue = (user: WebUser) => {
+      if (sortState.field === "used") {
+        return Math.max(0, user.used_total);
+      }
+      const value = sortState.field === "last_used_at" ? user.last_used_at : user.created_at;
+      if (!value) {
+        return null;
+      }
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) ? time : null;
+    };
+
     return [...filteredUsers].sort((left, right) => {
-      const diff = Math.max(0, left.used_total) - Math.max(0, right.used_total);
+      const leftValue = getSortValue(left);
+      const rightValue = getSortValue(right);
+
+      if (leftValue === null && rightValue !== null) {
+        return 1;
+      }
+      if (leftValue !== null && rightValue === null) {
+        return -1;
+      }
+      if (leftValue === null && rightValue === null) {
+        return String(left.username || left.name || left.id).localeCompare(String(right.username || right.name || right.id));
+      }
+
+      const diff = leftValue - rightValue;
       if (diff !== 0) {
-        return usedSort === "asc" ? diff : -diff;
+        return sortState.direction === "asc" ? diff : -diff;
       }
       return String(left.username || left.name || left.id).localeCompare(String(right.username || right.name || right.id));
     });
-  }, [filteredUsers, usedSort]);
+  }, [filteredUsers, sortState]);
 
   const selectableFilteredUsers = useMemo(
     () => displayedUsers.filter((user) => user.role !== "admin"),
@@ -285,8 +346,23 @@ export default function UsersPage() {
     });
   };
 
-  const toggleUsedSort = () => {
-    setUsedSort((current) => (current === "none" ? "desc" : current === "desc" ? "asc" : "none"));
+  const toggleSort = (field: Exclude<SortField, "none">) => {
+    setSortState((current) => {
+      if (current.field !== field) {
+        return { field, direction: "desc" };
+      }
+      if (current.direction === "desc") {
+        return { field, direction: "asc" };
+      }
+      return { field: "none", direction: "desc" };
+    });
+  };
+
+  const sortIcon = (field: Exclude<SortField, "none">) => {
+    if (sortState.field !== field) {
+      return "↕";
+    }
+    return sortState.direction === "desc" ? "↓" : "↑";
   };
 
   const deleteSelectedUsers = useCallback(async () => {
@@ -469,6 +545,14 @@ export default function UsersPage() {
             >
               {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
               刷新
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+              onClick={() => void logout()}
+            >
+              <LogOut className="size-4" />
+              退出
             </Button>
           </div>
         </div>
@@ -687,7 +771,11 @@ export default function UsersPage() {
                           aria-label="全选当前筛选用户"
                         />
                       </th>
-                      <th className="whitespace-nowrap px-5 py-3 md:text-center">用户</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">
+                        <div className="md:mx-auto md:grid md:w-[176px] md:grid-cols-[32px_minmax(0,1fr)] md:gap-3">
+                          <span className="md:col-start-2 md:text-center">用户</span>
+                        </div>
+                      </th>
                       <th className="whitespace-nowrap px-5 py-3 md:text-center">角色</th>
                       <th className="whitespace-nowrap px-5 py-3 md:text-center">会话</th>
                       <th className="whitespace-nowrap px-5 py-3 md:text-center">可用额度</th>
@@ -695,18 +783,42 @@ export default function UsersPage() {
                         <button
                           type="button"
                           className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg px-1 py-0.5 transition hover:bg-stone-100 hover:text-stone-950"
-                          onClick={toggleUsedSort}
+                          onClick={() => toggleSort("used")}
                           aria-label="按使用额度排序"
                         >
                           使用额度
                           <span className="text-[10px] text-stone-400">
-                            {usedSort === "desc" ? "↓" : usedSort === "asc" ? "↑" : "↕"}
+                            {sortIcon("used")}
                           </span>
                         </button>
                       </th>
                       <th className="whitespace-nowrap px-5 py-3 md:text-center">图片额度</th>
-                      <th className="whitespace-nowrap px-5 py-3 md:text-center">最后登录</th>
-                      <th className="whitespace-nowrap px-5 py-3 md:text-center">创建时间</th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg px-1 py-0.5 transition hover:bg-stone-100 hover:text-stone-950"
+                          onClick={() => toggleSort("last_used_at")}
+                          aria-label="按最后登录排序"
+                        >
+                          最后登录
+                          <span className="text-[10px] text-stone-400">
+                            {sortIcon("last_used_at")}
+                          </span>
+                        </button>
+                      </th>
+                      <th className="whitespace-nowrap px-5 py-3 md:text-center">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg px-1 py-0.5 transition hover:bg-stone-100 hover:text-stone-950"
+                          onClick={() => toggleSort("created_at")}
+                          aria-label="按创建时间排序"
+                        >
+                          创建时间
+                          <span className="text-[10px] text-stone-400">
+                            {sortIcon("created_at")}
+                          </span>
+                        </button>
+                      </th>
                       <th className="whitespace-nowrap px-5 py-3 text-right md:text-center">操作</th>
                     </tr>
                   </thead>
@@ -724,7 +836,7 @@ export default function UsersPage() {
                           />
                         </td>
                         <td className="px-5 py-4 md:text-center">
-                          <div className="flex items-center gap-2 md:justify-center">
+                          <div className="flex items-center gap-2 md:mx-auto md:grid md:w-[176px] md:grid-cols-[32px_minmax(0,1fr)] md:gap-3 md:text-center">
                             <div className="inline-flex size-8 items-center justify-center rounded-full bg-stone-100 text-stone-500">
                               {user.role === "admin" ? <ShieldCheck className="size-4" /> : <UserRound className="size-4" />}
                             </div>
@@ -804,25 +916,59 @@ export default function UsersPage() {
                         <td className="whitespace-nowrap px-5 py-4 text-stone-600 md:text-center">{formatTime(user.last_used_at)}</td>
                         <td className="whitespace-nowrap px-5 py-4 text-stone-600 md:text-center">{formatTime(user.created_at)}</td>
                         <td className="whitespace-nowrap px-5 py-4 text-right md:text-center">
-                          {user.role === "admin" ? (
-                            <span className="text-xs font-medium text-stone-300">--</span>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-9 whitespace-nowrap rounded-xl px-3 text-red-600 hover:bg-red-50 hover:text-red-700"
-                              disabled={Boolean(deletingUserIds[user.id]) || isBulkBusy}
-                              onClick={() => void deleteUser(user)}
-                              aria-label={`删除 ${user.username || user.name || user.id}`}
-                            >
-                              {deletingUserIds[user.id] ? (
-                                <LoaderCircle className="size-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="size-4" />
-                              )}
-                              删除
-                            </Button>
-                          )}
+                          <div className="inline-flex items-center justify-end gap-1.5 md:justify-center">
+                            {user.role === "user" ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-9 whitespace-nowrap rounded-xl border-stone-200 bg-white px-3 text-stone-700"
+                                disabled={Boolean(savingRoleIds[user.id]) || isBulkBusy}
+                                onClick={() => void saveUserRole(user, "admin")}
+                              >
+                                {savingRoleIds[user.id] ? (
+                                  <LoaderCircle className="size-4 animate-spin" />
+                                ) : (
+                                  <ShieldCheck className="size-4" />
+                                )}
+                                设为管理员
+                              </Button>
+                            ) : null}
+                            {user.role === "admin" && user.id !== "admin" ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-9 whitespace-nowrap rounded-xl border-stone-200 bg-white px-3 text-stone-600"
+                                disabled={Boolean(savingRoleIds[user.id]) || isBulkBusy}
+                                onClick={() => void saveUserRole(user, "user")}
+                              >
+                                {savingRoleIds[user.id] ? (
+                                  <LoaderCircle className="size-4 animate-spin" />
+                                ) : (
+                                  <UserRound className="size-4" />
+                                )}
+                                设为用户
+                              </Button>
+                            ) : null}
+                            {user.role === "admin" ? (
+                              user.id === "admin" ? <span className="text-xs font-medium text-stone-300">--</span> : null
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 whitespace-nowrap rounded-xl px-3 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                disabled={Boolean(deletingUserIds[user.id]) || isBulkBusy}
+                                onClick={() => void deleteUser(user)}
+                                aria-label={`删除 ${user.username || user.name || user.id}`}
+                              >
+                                {deletingUserIds[user.id] ? (
+                                  <LoaderCircle className="size-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="size-4" />
+                                )}
+                                删除
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}

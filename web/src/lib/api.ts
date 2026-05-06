@@ -691,6 +691,13 @@ export async function updateWebUserQuota(userId: string, quotaLimit: number) {
   });
 }
 
+export async function updateWebUserRole(userId: string, role: "admin" | "user") {
+  return httpRequest<WebUsersResponse>(`/api/web-users/${encodeURIComponent(userId)}/role`, {
+    method: "POST",
+    body: { role },
+  });
+}
+
 export async function updateWebUserDefaultQuotas(limits: WebUserDefaultQuotaLimits) {
   return httpRequest<WebUsersResponse>("/api/web-users/default-quotas", {
     method: "POST",

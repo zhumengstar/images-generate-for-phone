@@ -274,8 +274,8 @@ def _save_share_rewards(items: dict[str, dict[str, Any]]) -> None:
 
 def _create_image_share_reward(subject: dict[str, object]) -> dict[str, object]:
     subject_type = str(subject.get("type") or "")
-    if subject_type not in {"user", "guest"}:
-        raise HTTPException(status_code=400, detail={"error": "当前账号无需分享奖励"})
+    if subject_type not in {"admin", "user", "guest"}:
+        raise HTTPException(status_code=400, detail={"error": "当前账号无法创建分享链接"})
     now = _now_iso()
     with IMAGE_SHARE_REWARDS_LOCK:
         items = _load_share_rewards()
@@ -295,11 +295,20 @@ def _create_image_share_reward(subject: dict[str, object]) -> dict[str, object]:
     return {"code": code, "created_at": now}
 
 
-def _award_share_owner_quota(item: dict[str, Any]) -> None:
+def _award_share_owner_quota(item: dict[str, Any]) -> bool:
     owner_type = str(item.get("owner_type") or "")
     owner_user_id = str(item.get("owner_user_id") or "")
+    owner_fingerprint = str(item.get("owner_fingerprint") or "")
+    if owner_type == "admin":
+        return False
     default_limit = _guest_image_quota_limit() if owner_type == "guest" else _user_image_quota_limit()
+    if owner_type == "guest":
+        if web_user_service.get_guest_quota_limit(owner_fingerprint, default_limit) < 0:
+            return False
+    elif web_user_service.get_quota_limit(owner_user_id, default_limit) < 0:
+        return False
     web_user_service.increment_quota_limit(owner_user_id, 1, default_limit)
+    return True
 
 
 def _redeem_image_share_reward(code: str, redeemer: dict[str, object]) -> dict[str, object]:
@@ -320,11 +329,13 @@ def _redeem_image_share_reward(code: str, redeemer: dict[str, object]) -> dict[s
         redeemed_by = [str(value) for value in item.get("redeemed_by", []) if value]
         if redeemer_fingerprint in redeemed_by:
             return {"awarded": False, "message": "该设备已领取过这个分享奖励"}
-        _award_share_owner_quota(item)
+        awarded = _award_share_owner_quota(item)
         item["redeemed_by"] = [*redeemed_by, redeemer_fingerprint]
         item["last_redeemed_at"] = _now_iso()
         items[normalized_code] = item
         _save_share_rewards(items)
+    if not awarded:
+        return {"awarded": False, "message": "分享用户为无限额度，无需增加次数"}
     return {"awarded": True, "message": "已为分享用户增加 1 次图片额度"}
 
 

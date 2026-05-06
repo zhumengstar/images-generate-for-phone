@@ -126,7 +126,7 @@ export function TopNav() {
       const result = await createImageShareLink();
       const url = new URL(result.share_path, window.location.origin).toString();
       await copyTextToClipboard(url);
-      toast.success("分享链接已复制，不同用户首次点击 +1 次额度", {
+      toast.success("分享链接已复制，分享一次点击额度加一", {
         id: "image-share-link",
         duration: 1200,
       });
@@ -198,9 +198,10 @@ export function TopNav() {
                 图片编辑
               </button>
             </div>
-            <div className="flex min-w-0 shrink-0 items-center gap-1.5">
-              <span className="hidden max-w-[128px] truncate text-[11px] font-medium text-stone-500 min-[390px]:inline sm:max-w-none sm:text-xs">
-                不同用户点击 +1
+            <div className="flex min-w-0 shrink-0 items-center gap-1">
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-medium text-stone-500 min-[390px]:text-[11px] sm:text-xs">
+                <span className="min-[390px]:hidden">分享额度+1</span>
+                <span className="hidden min-[390px]:inline">分享被点击额度+1</span>
               </span>
               <button
                 type="button"
@@ -219,7 +220,7 @@ export function TopNav() {
                 href="/users"
                 className="hidden h-9 items-center rounded-full border border-stone-200 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950 sm:inline-flex"
               >
-                用户
+                用户管理
               </Link>
             ) : null}
             {isGuest ? (

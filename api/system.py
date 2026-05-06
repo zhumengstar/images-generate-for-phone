@@ -13,6 +13,8 @@ from services.proxy_service import test_proxy
 from services.web_user_service import web_user_service
 
 IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
+IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
+IMAGE_SHARE_REWARDS_PATH = DATA_DIR / "image_share_rewards.json"
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -34,6 +36,10 @@ class WebUserQuotaUpdateRequest(BaseModel):
     quota_limit: int
 
 
+class WebUserRoleUpdateRequest(BaseModel):
+    role: str
+
+
 class WebUserDefaultQuotaUpdateRequest(BaseModel):
     user_image_quota_limit: int
     guest_image_quota_limit: int
@@ -48,9 +54,11 @@ def _default_quota_limits() -> dict[str, int]:
 
 def _web_users_payload() -> dict[str, object]:
     limits = _default_quota_limits()
+    quota_items = _load_ip_quotas()
+    _merge_task_usage_counts(quota_items)
     return {
         "items": web_user_service.list_users(
-            _load_ip_quotas(),
+            quota_items,
             limits["user_image_quota_limit"],
             limits["guest_image_quota_limit"],
         ),
@@ -79,6 +87,62 @@ def _save_ip_quotas(items: dict[str, int]) -> None:
     IP_QUOTAS_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_ip_tasks() -> dict[str, dict[str, object]]:
+    try:
+        data = json.loads(IP_IMAGE_TASKS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    raw_tasks = data.get("tasks") if isinstance(data, dict) else []
+    if not isinstance(raw_tasks, list):
+        return {}
+    items: dict[str, dict[str, object]] = {}
+    for task in raw_tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        owner = str(task.get("owner") or "").strip()
+        if task_id and owner:
+            items[f"{owner}:{task_id}"] = dict(task)
+    return items
+
+
+def _save_ip_tasks(items: dict[str, dict[str, object]]) -> None:
+    IP_IMAGE_TASKS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    sorted_items = sorted(items.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    IP_IMAGE_TASKS_PATH.write_text(json.dumps({"tasks": sorted_items[:120]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_share_rewards() -> dict[str, dict[str, object]]:
+    try:
+        data = json.loads(IMAGE_SHARE_REWARDS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): dict(value) for key, value in data.items() if isinstance(value, dict)}
+
+
+def _save_share_rewards(items: dict[str, dict[str, object]]) -> None:
+    IMAGE_SHARE_REWARDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    IMAGE_SHARE_REWARDS_PATH.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _merge_task_usage_counts(quota_items: dict[str, int]) -> None:
+    task_items = _load_ip_tasks()
+    task_usage: dict[str, int] = {}
+    for task in task_items.values():
+        if str(task.get("status") or "") != "success":
+            continue
+        quota_key = str(task.get("quota_key") or task.get("owner") or "").strip()
+        if not quota_key:
+            continue
+        data = task.get("data")
+        count = len(data) if isinstance(data, list) and data else 1
+        task_usage[quota_key] = task_usage.get(quota_key, 0) + max(1, count)
+    for key, used in task_usage.items():
+        quota_items[key] = max(max(0, int(quota_items.get(key, 0))), max(0, int(used)))
+
+
 def _migrate_guest_quota_to_user(user_id: str, device_fingerprint: str) -> int:
     normalized_user_id = str(user_id or "").strip()
     normalized_device = str(device_fingerprint or "").strip()
@@ -88,7 +152,12 @@ def _migrate_guest_quota_to_user(user_id: str, device_fingerprint: str) -> int:
     user_key = f"user|{normalized_user_id}|{normalized_device}"
     migrated = 0
     for key in list(items):
-        if key.startswith("user|") or "|" not in key or key.rsplit("|", 1)[-1] != normalized_device:
+        if (
+            key.startswith("user|")
+            or key.startswith("admin|")
+            or "|" not in key
+            or key.rsplit("|", 1)[-1] != normalized_device
+        ):
             continue
         migrated += max(0, int(items.get(key, 0)))
         items.pop(key, None)
@@ -96,6 +165,69 @@ def _migrate_guest_quota_to_user(user_id: str, device_fingerprint: str) -> int:
         items[user_key] = max(0, int(items.get(user_key, 0))) + migrated
         _save_ip_quotas(items)
     return migrated
+
+
+def _is_guest_owner_key(value: str, fingerprint: str) -> bool:
+    return "|" in value and not value.startswith(("user|", "admin|")) and value.rsplit("|", 1)[-1] == fingerprint
+
+
+def _migrate_guest_image_tasks_to_user(user_id: str, device_fingerprint: str) -> int:
+    normalized_user_id = str(user_id or "").strip()
+    normalized_device = str(device_fingerprint or "").strip()
+    if not normalized_user_id or not normalized_device:
+        return 0
+    target_owner = f"user|{normalized_user_id}|{normalized_device}"
+    items = _load_ip_tasks()
+    migrated = 0
+    for key, task in list(items.items()):
+        owner = str(task.get("owner") or "").strip()
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or not _is_guest_owner_key(owner, normalized_device):
+            continue
+        target_key = f"{target_owner}:{task_id}"
+        next_task = dict(task)
+        next_task["owner"] = target_owner
+        next_task["quota_key"] = target_owner
+        if target_key not in items or str(next_task.get("updated_at") or "") >= str(items[target_key].get("updated_at") or ""):
+            items[target_key] = next_task
+        items.pop(key, None)
+        migrated += 1
+    if migrated:
+        _save_ip_tasks(items)
+    return migrated
+
+
+def _migrate_guest_share_rewards_to_user(user_id: str, device_fingerprint: str, name: str = "") -> int:
+    normalized_user_id = str(user_id or "").strip()
+    normalized_device = str(device_fingerprint or "").strip()
+    if not normalized_user_id or not normalized_device:
+        return 0
+    items = _load_share_rewards()
+    migrated = 0
+    for code, item in list(items.items()):
+        if str(item.get("owner_type") or "") != "guest":
+            continue
+        if str(item.get("owner_fingerprint") or "").strip() != normalized_device:
+            continue
+        next_item = dict(item)
+        next_item["owner_type"] = "user"
+        next_item["owner_user_id"] = normalized_user_id
+        if name:
+            next_item["owner_name"] = name
+        items[code] = next_item
+        migrated += 1
+    if migrated:
+        _save_share_rewards(items)
+    return migrated
+
+
+def _promote_guest_data_to_user(user_id: str, device_fingerprint: str, name: str = "") -> dict[str, int]:
+    return {
+        "quota": _migrate_guest_quota_to_user(user_id, device_fingerprint),
+        "tasks": _migrate_guest_image_tasks_to_user(user_id, device_fingerprint),
+        "share_rewards": _migrate_guest_share_rewards_to_user(user_id, device_fingerprint, name),
+        "guests": web_user_service.promote_guest_to_user(user_id, device_fingerprint),
+    }
 
 
 def _reset_quota_usage_for_target(target: dict[str, str]) -> int:
@@ -111,7 +243,12 @@ def _reset_quota_usage_for_target(target: dict[str, str]) -> int:
         fingerprint = target.get("device_fingerprint", "")
         if fingerprint:
             for key in list(items):
-                if key.startswith("user|") or "|" not in key or key.rsplit("|", 1)[-1] != fingerprint:
+                if (
+                    key.startswith("user|")
+                    or key.startswith("admin|")
+                    or "|" not in key
+                    or key.rsplit("|", 1)[-1] != fingerprint
+                ):
                     continue
                 items.pop(key, None)
                 removed += 1
@@ -122,6 +259,27 @@ def _reset_quota_usage_for_target(target: dict[str, str]) -> int:
 
 def _reset_quota_usage_for_web_user(user_id: str) -> int:
     return _reset_quota_usage_for_target(web_user_service.quota_usage_target(user_id))
+
+
+def _migrate_registered_quota_role(user_id: str, role: str) -> int:
+    normalized_id = str(user_id or "").strip()
+    normalized_role = str(role or "").strip().lower()
+    if not normalized_id or normalized_role not in {"admin", "user"}:
+        return 0
+    source_prefix = f"{'user' if normalized_role == 'admin' else 'admin'}|{normalized_id}|"
+    target_prefix = f"{normalized_role}|{normalized_id}|"
+    items = _load_ip_quotas()
+    migrated = 0
+    for key in list(items):
+        if not key.startswith(source_prefix):
+            continue
+        target_key = f"{target_prefix}{key[len(source_prefix):]}"
+        items[target_key] = max(0, int(items.get(target_key, 0))) + max(0, int(items.get(key, 0)))
+        items.pop(key, None)
+        migrated += 1
+    if migrated:
+        _save_ip_quotas(items)
+    return migrated
 
 
 def create_router(app_version: str) -> APIRouter:
@@ -145,8 +303,11 @@ def create_router(app_version: str) -> APIRouter:
             try:
                 identity, issued_token = web_user_service.login(username, password, device_fingerprint)
                 if identity.get("role") == "user":
-                    _migrate_guest_quota_to_user(str(identity.get("id") or ""), device_fingerprint)
-                    web_user_service.promote_guest_to_user(str(identity.get("id") or ""), device_fingerprint)
+                    _promote_guest_data_to_user(
+                        str(identity.get("id") or ""),
+                        device_fingerprint,
+                        str(identity.get("name") or ""),
+                    )
                     device_registered = True
             except PermissionError as exc:
                 raise HTTPException(status_code=401, detail={"error": str(exc)}) from exc
@@ -226,6 +387,19 @@ def create_router(app_version: str) -> APIRouter:
         try:
             web_user_service.update_quota_limit(user_id, body.quota_limit, config.user_image_quota_limit)
             _reset_quota_usage_for_web_user(user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return _web_users_payload()
+
+    @router.post("/api/web-users/{user_id}/role")
+    async def update_web_user_role(user_id: str, body: WebUserRoleUpdateRequest, authorization: str | None = Header(default=None)):
+        identity = require_admin(authorization)
+        normalized_role = str(body.role or "").strip().lower()
+        if str(identity.get("id") or "").strip() == user_id.strip() and normalized_role != "admin":
+            raise HTTPException(status_code=400, detail={"error": "不能降低当前登录管理员的权限"})
+        try:
+            item = web_user_service.update_role(user_id, normalized_role)
+            _migrate_registered_quota_role(str(item.get("id") or user_id), normalized_role)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
         return _web_users_payload()

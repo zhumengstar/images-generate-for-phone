@@ -119,6 +119,45 @@ class WebUserService:
             return 0
         removed = 0
         with self._lock:
+            now = _now_iso()
+            target_index: int | None = None
+            guest_items: list[dict[str, object]] = []
+            for index, item in enumerate(self._items):
+                public = self._public_item(item)
+                if _clean(public.get("id")) == normalized_id:
+                    target_index = index
+                if public.get("role") == "guest" and _clean(item.get("device_fingerprint")) == normalized_device:
+                    guest_items.append(dict(item))
+
+            if target_index is not None and guest_items:
+                target_item = dict(self._items[target_index])
+                converted_guests = [
+                    item for item in target_item.get("converted_guests", []) if isinstance(item, dict)
+                ] if isinstance(target_item.get("converted_guests"), list) else []
+                existing_guest_ids = {_clean(item.get("id")) for item in converted_guests}
+                for guest_item in guest_items:
+                    guest_id = _clean(guest_item.get("id"))
+                    if guest_id and guest_id not in existing_guest_ids:
+                        converted_guests.append(
+                            {
+                                "id": guest_id,
+                                "username": _clean(guest_item.get("username")),
+                                "ip": _clean(guest_item.get("ip")),
+                                "device_fingerprint": _clean(guest_item.get("device_fingerprint")),
+                                "quota_limit": guest_item.get("quota_limit"),
+                                "created_at": guest_item.get("created_at"),
+                                "last_used_at": guest_item.get("last_used_at"),
+                                "converted_at": now,
+                            }
+                        )
+                if target_item.get("quota_limit") in {None, ""}:
+                    for guest_item in guest_items:
+                        if guest_item.get("quota_limit") not in {None, ""}:
+                            target_item["quota_limit"] = guest_item.get("quota_limit")
+                            break
+                target_item["converted_guests"] = converted_guests[-20:]
+                self._items[target_index] = target_item
+
             next_items: list[dict[str, object]] = []
             for item in self._items:
                 if self._public_item(item).get("role") == "guest" and _clean(item.get("device_fingerprint")) == normalized_device:
@@ -279,6 +318,7 @@ class WebUserService:
             is_admin = public.get("role") == "admin"
             is_guest = public.get("role") == "guest"
             quota_limit = -1 if is_admin else self._quota_limit_for_item(item, guest_limit if is_guest else user_limit)
+            registered_prefixes = (f"user|{user_id}|", f"admin|{user_id}|")
             if is_admin:
                 device_usages = [
                     {
@@ -287,7 +327,7 @@ class WebUserService:
                         "remaining": -1,
                     }
                     for key, value in quota_items.items()
-                    if key == f"admin|{user_id}" or key.startswith(f"admin|{user_id}|")
+                    if key == f"admin|{user_id}" or key.startswith(registered_prefixes)
                 ]
             elif is_guest:
                 guest_fingerprint = _clean(item.get("device_fingerprint"))
@@ -298,7 +338,7 @@ class WebUserService:
                         "remaining": max(0, quota_limit - max(0, int(value or 0))),
                     }
                     for key, value in quota_items.items()
-                    if "|" in key and key.rsplit("|", 1)[-1] == guest_fingerprint
+                    if not key.startswith(("user|", "admin|")) and "|" in key and key.rsplit("|", 1)[-1] == guest_fingerprint
                 ]
             else:
                 device_usages = [
@@ -308,7 +348,7 @@ class WebUserService:
                         "remaining": -1 if quota_limit < 0 else max(0, quota_limit - max(0, int(value or 0))),
                     }
                     for key, value in quota_items.items()
-                    if key.startswith(f"user|{user_id}|")
+                    if key.startswith(registered_prefixes)
                 ]
             used_total = sum(int(usage["used"]) for usage in device_usages)
             sessions = _sessions(item)
@@ -397,6 +437,35 @@ class WebUserService:
                     raise ValueError("只能设置用户或访客的图片额度")
                 next_item = dict(item)
                 next_item["quota_limit"] = normalized_limit
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item)
+        raise ValueError("用户不存在")
+
+    def update_role(self, user_id: str, role: str) -> dict[str, object]:
+        normalized_id = _clean(user_id)
+        normalized_role = _clean(role).lower()
+        if not normalized_id:
+            raise ValueError("用户不存在")
+        if normalized_role not in {"admin", "user"}:
+            raise ValueError("只能设置为管理员或普通用户")
+        with self._lock:
+            admin_count = sum(1 for item in self._items if self._public_item(item).get("role") == "admin")
+            for index, item in enumerate(self._items):
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                current_role = str(public.get("role") or "")
+                if current_role == "guest":
+                    raise ValueError("访客不能设置为管理员")
+                if normalized_id == "admin" and normalized_role != "admin":
+                    raise ValueError("内置管理员账号不能降权")
+                if current_role == "admin" and normalized_role != "admin" and admin_count <= 1:
+                    raise ValueError("至少需要保留一个管理员")
+                if current_role == normalized_role:
+                    return public
+                next_item = dict(item)
+                next_item["role"] = normalized_role
                 self._items[index] = next_item
                 self._save()
                 return self._public_item(next_item)
