@@ -17,6 +17,7 @@ type ImageComposerProps = {
   runningTaskCount: number;
   isPolishingPrompt: boolean;
   referenceImages: StoredReferenceImage[];
+  expandRequestId: number;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
@@ -113,6 +114,7 @@ export function ImageComposer({
   runningTaskCount,
   isPolishingPrompt,
   referenceImages,
+  expandRequestId,
   textareaRef,
   fileInputRef,
   onPromptChange,
@@ -186,6 +188,14 @@ export function ImageComposer({
     textareaRef.current?.blur();
     resetComposerPlacement();
   }, [resetComposerPlacement, textareaRef]);
+
+  useEffect(() => {
+    if (expandRequestId <= 0) {
+      return;
+    }
+    resetComposerPlacement();
+    setIsComposerCollapsed(false);
+  }, [expandRequestId, resetComposerPlacement]);
 
   const resizePromptTextarea = useCallback((force = false) => {
     if (typeof window === "undefined") {

@@ -5,7 +5,7 @@ import hmac
 import json
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 
@@ -18,6 +18,34 @@ ADMIN_PASSWORD = "muling1201"
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value: object) -> datetime | None:
+    text = _clean(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _is_future(value: object) -> bool:
+    parsed = _parse_iso(value)
+    return parsed is not None and parsed > datetime.now(timezone.utc)
+
+
+def _parse_package_quota(value: object) -> int:
+    text = _clean(value)
+    if "-" not in text:
+        return 0
+    try:
+        return max(0, int(text.rsplit("-", 1)[-1]))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _clean(value: object) -> str:
@@ -64,6 +92,10 @@ class WebUserService:
             "role": item.get("role") if item.get("role") in {"admin", "user", "guest"} else "user",
             "created_at": item.get("created_at"),
             "last_used_at": item.get("last_used_at"),
+            "quota_limit": item.get("quota_limit"),
+            "quota_expires_at": item.get("quota_expires_at"),
+            "quota_package": item.get("quota_package"),
+            "quota_package_base_limit": item.get("quota_package_base_limit"),
         }
 
     def _device_owner_index(self, device_fingerprint: str) -> int | None:
@@ -318,6 +350,9 @@ class WebUserService:
             is_admin = public.get("role") == "admin"
             is_guest = public.get("role") == "guest"
             quota_limit = -1 if is_admin else self._quota_limit_for_item(item, guest_limit if is_guest else user_limit)
+            quota_expires_at = _clean(item.get("quota_expires_at"))
+            quota_package = _clean(item.get("quota_package"))
+            has_active_package = bool(quota_package and _is_future(quota_expires_at))
             registered_prefixes = (f"user|{user_id}|", f"admin|{user_id}|")
             if is_admin:
                 device_usages = [
@@ -361,6 +396,8 @@ class WebUserService:
                     "device_count": len({str(usage["device"]) for usage in device_usages}) if is_admin else len(set(real_session_devices) | {str(usage["device"]) for usage in device_usages} | ({_clean(item.get("device_fingerprint"))} if is_guest else set())),
                     "used_total": used_total,
                     "quota_limit": quota_limit,
+                    "quota_expires_at": quota_expires_at if has_active_package else "",
+                    "quota_package": quota_package if has_active_package else "",
                     "remaining_total": -1 if quota_limit < 0 else max(0, quota_limit - used_total),
                     "device_usages": device_usages,
                     "password_saved": bool(_clean(item.get("password_hash"))),
@@ -372,6 +409,14 @@ class WebUserService:
 
     @staticmethod
     def _quota_limit_for_item(item: dict[str, object], default_limit: int) -> int:
+        if _clean(item.get("quota_package")) and not _is_future(item.get("quota_expires_at")):
+            try:
+                return max(0, int(item.get("quota_package_base_limit")))
+            except (TypeError, ValueError):
+                try:
+                    return max(0, int(item.get("quota_limit")) - _parse_package_quota(item.get("quota_package")))
+                except (TypeError, ValueError):
+                    return max(0, int(default_limit))
         value = item.get("quota_limit")
         if value is None or value == "":
             return max(0, int(default_limit))
@@ -421,6 +466,17 @@ class WebUserService:
                     return public
         return None
 
+    def get_public_user(self, user_id: str) -> dict[str, object] | None:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            return None
+        with self._lock:
+            for item in self._items:
+                public = self._public_item(item)
+                if _clean(public.get("id")) == normalized_id:
+                    return public
+        return None
+
     def update_quota_limit(self, user_id: str, quota_limit: int, default_limit: int) -> dict[str, object]:
         normalized_id = _clean(user_id)
         if not normalized_id:
@@ -432,16 +488,51 @@ class WebUserService:
                 if _clean(public.get("id")) != normalized_id:
                     continue
                 if public.get("role") == "admin":
-                    raise ValueError("管理员默认无限额度，无需设置")
+                    raise ValueError("管理员不需要设置图片额度")
                 if public.get("role") not in {"user", "guest"}:
                     raise ValueError("只能设置用户或访客的图片额度")
                 next_item = dict(item)
                 next_item["quota_limit"] = normalized_limit
+                next_item.pop("quota_package", None)
+                next_item.pop("quota_expires_at", None)
+                next_item.pop("quota_package_base_limit", None)
                 self._items[index] = next_item
                 self._save()
                 return self._public_item(next_item)
         raise ValueError("用户不存在")
 
+    def update_quota_package(self, user_id: str, package_quota: int, days: int, default_limit: int) -> dict[str, object]:
+        normalized_id = _clean(user_id)
+        if not normalized_id:
+            raise ValueError("用户不存在")
+        normalized_package_quota = max(1, int(package_quota))
+        normalized_days = max(1, int(days))
+        with self._lock:
+            for index, item in enumerate(self._items):
+                public = self._public_item(item)
+                if _clean(public.get("id")) != normalized_id:
+                    continue
+                if public.get("role") == "admin":
+                    raise ValueError("管理员不需要设置套餐")
+                if public.get("role") not in {"user", "guest"}:
+                    raise ValueError("只能设置用户或访客的图片套餐")
+                current_limit = self._quota_limit_for_item(item, default_limit)
+                if _clean(item.get("quota_package")) and _is_future(item.get("quota_expires_at")):
+                    try:
+                        base_limit = max(0, int(item.get("quota_package_base_limit")))
+                    except (TypeError, ValueError):
+                        base_limit = max(0, current_limit - _parse_package_quota(item.get("quota_package")))
+                else:
+                    base_limit = max(0, current_limit)
+                next_item = dict(item)
+                next_item["quota_limit"] = base_limit + normalized_package_quota
+                next_item["quota_package"] = f"{normalized_days}d-{normalized_package_quota}"
+                next_item["quota_package_base_limit"] = base_limit
+                next_item["quota_expires_at"] = (datetime.now(timezone.utc) + timedelta(days=normalized_days)).isoformat()
+                self._items[index] = next_item
+                self._save()
+                return self._public_item(next_item)
+        raise ValueError("用户不存在")
     def update_role(self, user_id: str, role: str) -> dict[str, object]:
         normalized_id = _clean(user_id)
         normalized_role = _clean(role).lower()
@@ -489,6 +580,8 @@ class WebUserService:
                 next_limit = -1 if current_limit < 0 else current_limit + increment
                 next_item = dict(item)
                 next_item["quota_limit"] = next_limit
+                next_item.pop("quota_package", None)
+                next_item.pop("quota_expires_at", None)
                 self._items[index] = next_item
                 self._save()
                 return self._public_item(next_item)

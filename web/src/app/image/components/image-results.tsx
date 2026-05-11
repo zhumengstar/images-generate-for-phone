@@ -255,7 +255,9 @@ function ImageResultsComponent({
                       const sizeLabel = image.b64_json ? formatBase64ImageSize(image.b64_json) : "";
                       const dimensions = imageDimensions[image.id];
                       const imageMeta = [sizeLabel, dimensions].filter(Boolean).join(" · ");
-                      const elapsedLabel = formatElapsedTime(turn.createdAt, image.completedAt);
+                      const elapsedLabel = image.completedAt
+                        ? formatElapsedTime(turn.createdAt, image.completedAt, { fixed: true })
+                        : "";
 
                       return (
                         <div
@@ -281,37 +283,37 @@ function ImageResultsComponent({
                               }}
                             />
                           </button>
-                          <div className="flex min-w-0 flex-1 flex-col justify-between px-3 py-2.5 sm:flex sm:flex-none sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-0 sm:py-2">
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-stone-800 sm:inline-flex sm:h-7 sm:items-center sm:rounded-full sm:bg-white/80 sm:px-2.5 sm:text-xs sm:font-medium sm:text-stone-700 sm:ring-1 sm:ring-stone-200/80">
-                                结果 {index + 1}
-                              </div>
+                          <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-2.5 sm:justify-center sm:px-4 sm:py-3">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
                               {elapsedLabel ? (
-                                <div className="mt-1 inline-flex h-6 items-center rounded-full bg-stone-950 px-2 text-[11px] font-medium text-white sm:hidden">
-                                  耗时 {elapsedLabel}
+                                <div className="inline-flex h-6 items-center rounded-full border border-stone-200 bg-stone-50 px-2 text-[11px] font-medium text-stone-500">
+                                  用时 {elapsedLabel}
                                 </div>
                               ) : null}
+                              {imageMeta ? <span className="text-[11px] text-stone-400 sm:text-xs">{imageMeta}</span> : null}
                               <button
                                 type="button"
                                 className={cn(
-                                  "mt-1 block w-full cursor-pointer break-words text-left text-xs leading-5 text-stone-500 sm:hidden",
-                                  !expandedPromptIds[`${turn.id}-${image.id}`] && "image-mobile-text-clamp-3",
+                                  "block w-full cursor-pointer break-words text-left text-xs leading-5 text-stone-500 sm:line-clamp-3",
+                                  !expandedPromptIds[`${turn.id}-${image.id}`] && "image-mobile-text-clamp-3 sm:line-clamp-2",
                                 )}
                                 onClick={() => togglePromptExpanded(`${turn.id}-${image.id}`)}
                               >
                                 {turn.prompt}
                               </button>
                             </div>
-                            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 sm:mt-0 sm:justify-end">
+                            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                               <button
                                 type="button"
-                                className="inline-flex h-7 items-center gap-1.5 rounded-full bg-stone-950 px-2.5 text-[11px] font-medium text-white shadow-sm transition hover:bg-stone-800"
-                                onClick={() => void onEditImage(selectedConversation.id, image)}
+                                className="relative z-10 inline-flex h-7 items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-2.5 text-[11px] font-medium text-teal-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-100 hover:text-teal-800"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void onEditImage(selectedConversation.id, image);
+                                }}
                               >
                                 <ImagePlus className="size-3.5" />
                                 编辑图片
                               </button>
-                              {imageMeta ? <span className="min-w-0 break-words text-stone-400 sm:truncate">{imageMeta}</span> : null}
                             </div>
                           </div>
                         </div>
@@ -423,13 +425,17 @@ function formatImageDimensions(width: number, height: number) {
   return `${width} x ${height}`;
 }
 
-function formatElapsedTime(startValue: string, endValue: string | number | undefined) {
+function formatElapsedTime(
+  startValue: string,
+  endValue: string | number | undefined,
+  options: { fixed?: boolean } = {},
+) {
   const start = new Date(startValue).getTime();
   const end = typeof endValue === "number" ? endValue : endValue ? new Date(endValue).getTime() : Date.now();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-    return "0秒";
+    return options.fixed ? "<1秒" : "0秒";
   }
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const totalSeconds = Math.max(options.fixed ? 1 : 0, Math.floor((end - start) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   if (minutes <= 0) {

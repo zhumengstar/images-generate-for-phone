@@ -28,8 +28,13 @@ const anonymousImageSession: StoredAuthSession = {
 
 async function copyTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Some browsers reject clipboard writes after async work even on localhost.
+      // Fall back to the legacy textarea copy path below.
+    }
   }
   const textarea = document.createElement("textarea");
   textarea.value = text;
@@ -38,8 +43,11 @@ async function copyTextToClipboard(text: string) {
   textarea.style.left = "-9999px";
   document.body.appendChild(textarea);
   textarea.select();
-  document.execCommand("copy");
+  const copied = document.execCommand("copy");
   textarea.remove();
+  if (!copied) {
+    throw new Error("复制失败，请手动复制分享链接");
+  }
 }
 
 export function TopNav() {
@@ -198,7 +206,7 @@ export function TopNav() {
                 图片编辑
               </button>
             </div>
-            <div className="flex min-w-0 shrink-0 items-center gap-1">
+            <div className={cn("flex min-w-0 shrink-0 items-center gap-1", session.role === "admin" && "hidden sm:flex")}>
               <span className="shrink-0 whitespace-nowrap text-[10px] font-medium text-stone-500 min-[390px]:text-[11px] sm:text-xs">
                 <span className="min-[390px]:hidden">分享额度+1</span>
                 <span className="hidden min-[390px]:inline">分享被点击额度+1</span>
@@ -218,7 +226,7 @@ export function TopNav() {
             {!isGuest && session.role === "admin" ? (
               <Link
                 href="/users"
-                className="hidden h-9 items-center rounded-full border border-stone-200 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950 sm:inline-flex"
+                className="inline-flex h-9 items-center rounded-full border border-stone-200 bg-white px-3 text-xs font-bold text-stone-700 shadow-sm transition hover:bg-stone-50 hover:text-stone-950"
               >
                 用户管理
               </Link>

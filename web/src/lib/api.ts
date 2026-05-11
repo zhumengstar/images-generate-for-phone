@@ -82,7 +82,7 @@ export type SystemLog = {
 
 export type ImageResponse = {
   created: number;
-  data: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
+  data: Array<{ b64_json?: string; url?: string; source_url?: string; revised_prompt?: string }>;
   ip_quota?: {
     user_id?: string;
     name?: string;
@@ -124,7 +124,7 @@ export type ImageTask = {
   size?: string;
   created_at: string;
   updated_at: string;
-  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
+  data?: Array<{ b64_json?: string; url?: string; source_url?: string; revised_prompt?: string }>;
   error?: string;
 };
 
@@ -174,6 +174,8 @@ export type WebUser = {
   device_count: number;
   used_total: number;
   quota_limit: number;
+  quota_expires_at?: string;
+  quota_package?: string;
   remaining_total: number;
   password_saved: boolean;
   device_usages: Array<{
@@ -688,6 +690,13 @@ export async function updateWebUserQuota(userId: string, quotaLimit: number) {
   return httpRequest<WebUsersResponse>(`/api/web-users/${encodeURIComponent(userId)}/quota`, {
     method: "POST",
     body: { quota_limit: quotaLimit },
+  });
+}
+
+export async function updateWebUserQuotaPackage(userId: string, quotaLimit = 100, days = 7) {
+  return httpRequest<WebUsersResponse>(`/api/web-users/${encodeURIComponent(userId)}/quota-package`, {
+    method: "POST",
+    body: { quota_limit: quotaLimit, days },
   });
 }
 

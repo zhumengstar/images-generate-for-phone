@@ -13,5 +13,5 @@
   "proxy": "",
   "base_url": "",
   "user_image_quota_limit": 5,
-  "guest_image_quota_limit": 2
+  "guest_image_quota_limit": 3
 }

@@ -36,6 +36,11 @@ class WebUserQuotaUpdateRequest(BaseModel):
     quota_limit: int
 
 
+class WebUserQuotaPackageUpdateRequest(BaseModel):
+    quota_limit: int = 100
+    days: int = 7
+
+
 class WebUserRoleUpdateRequest(BaseModel):
     role: str
 
@@ -261,6 +266,41 @@ def _reset_quota_usage_for_web_user(user_id: str) -> int:
     return _reset_quota_usage_for_target(web_user_service.quota_usage_target(user_id))
 
 
+def _quota_usage_for_target(target: dict[str, str]) -> int:
+    items = _load_ip_quotas()
+    _merge_task_usage_counts(items)
+    total = 0
+    if target["role"] == "user":
+        prefix = f"user|{target['id']}|"
+        for key, value in items.items():
+            if key.startswith(prefix):
+                total += max(0, int(value or 0))
+    elif target["role"] == "guest":
+        fingerprint = target.get("device_fingerprint", "")
+        if fingerprint:
+            for key, value in items.items():
+                if (
+                    key.startswith("user|")
+                    or key.startswith("admin|")
+                    or "|" not in key
+                    or key.rsplit("|", 1)[-1] != fingerprint
+                ):
+                    continue
+                total += max(0, int(value or 0))
+    return total
+
+
+def _quota_usage_for_web_user(user_id: str) -> int:
+    return _quota_usage_for_target(web_user_service.quota_usage_target(user_id))
+
+
+def _web_user_default_limit(user_id: str) -> int:
+    public = web_user_service.get_public_user(user_id)
+    if public and public.get("role") == "guest":
+        return config.guest_image_quota_limit
+    return config.user_image_quota_limit
+
+
 def _migrate_registered_quota_role(user_id: str, role: str) -> int:
     normalized_id = str(user_id or "").strip()
     normalized_role = str(role or "").strip().lower()
@@ -385,8 +425,25 @@ def create_router(app_version: str) -> APIRouter:
     async def update_web_user_quota(user_id: str, body: WebUserQuotaUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)
         try:
-            web_user_service.update_quota_limit(user_id, body.quota_limit, config.user_image_quota_limit)
-            _reset_quota_usage_for_web_user(user_id)
+            quota_limit = int(body.quota_limit)
+            if quota_limit >= 0:
+                default_limit = _web_user_default_limit(user_id)
+                quota_limit += web_user_service.get_quota_limit(user_id, default_limit)
+            web_user_service.update_quota_limit(user_id, quota_limit, _web_user_default_limit(user_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
+        return _web_users_payload()
+
+    @router.post("/api/web-users/{user_id}/quota-package")
+    async def update_web_user_quota_package(
+        user_id: str,
+        body: WebUserQuotaPackageUpdateRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        try:
+            package_limit = max(1, int(body.quota_limit))
+            web_user_service.update_quota_package(user_id, package_limit, body.days, _web_user_default_limit(user_id))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
         return _web_users_payload()

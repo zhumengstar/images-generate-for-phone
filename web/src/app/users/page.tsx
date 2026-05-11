@@ -12,6 +12,7 @@ import {
   fetchWebUsers,
   updateWebUserDefaultQuotas,
   updateWebUserQuota,
+  updateWebUserQuotaPackage,
   updateWebUserRole,
   type WebUser,
   type WebUsersResponse,
@@ -44,6 +45,19 @@ function roleLabel(role: WebUser["role"]) {
 
 function formatUserQuota(user: WebUser) {
   return user.quota_limit < 0 ? "无限" : `${user.remaining_total}/${user.quota_limit}`;
+}
+
+function formatQuotaPackage(user: WebUser) {
+  if (!user.quota_package || !user.quota_expires_at) {
+    return "";
+  }
+  const expiresAt = new Date(user.quota_expires_at);
+  if (Number.isNaN(expiresAt.getTime())) {
+    return "7天套餐";
+  }
+  const month = String(expiresAt.getMonth() + 1).padStart(2, "0");
+  const day = String(expiresAt.getDate()).padStart(2, "0");
+  return `7天套餐 至 ${month}/${day}`;
 }
 
 function formatSession(user: WebUser) {
@@ -166,6 +180,22 @@ export default function UsersPage() {
       await saveUserQuota(user, Number(value));
     },
     [quotaDrafts, saveUserQuota],
+  );
+
+  const saveQuotaPackage = useCallback(
+    async (user: WebUser) => {
+      setSavingQuotaIds((current) => ({ ...current, [user.id]: true }));
+      try {
+        const data = await updateWebUserQuotaPackage(user.id, 100, 7);
+        applyWebUsersData(data);
+        toast.success("已设置 7 天 100 张套餐");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "设置套餐失败");
+      } finally {
+        setSavingQuotaIds((current) => ({ ...current, [user.id]: false }));
+      }
+    },
+    [applyWebUsersData],
   );
 
   const saveUserRole = useCallback(async (user: WebUser, role: "admin" | "user") => {
@@ -476,8 +506,8 @@ export default function UsersPage() {
       }}
     >
       <div className="mx-auto flex min-h-0 w-full max-w-none flex-col gap-2">
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:justify-between">
+          <div className="hidden min-w-0 flex-wrap items-center gap-2 sm:flex">
             <h1 className="text-2xl font-semibold tracking-tight text-stone-950">用户管理</h1>
             {[
               ["用户", stats.total],
@@ -494,7 +524,7 @@ export default function UsersPage() {
               </span>
             ))}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <div className="hidden shrink-0 items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-1.5 shadow-sm md:flex">
               <span className="whitespace-nowrap text-sm font-semibold text-stone-800">默认额度</span>
               <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
@@ -557,7 +587,7 @@ export default function UsersPage() {
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-2 shadow-sm md:hidden">
+        <div className="hidden shrink-0 flex-wrap items-center gap-2 rounded-2xl border border-stone-200/80 bg-white px-3 py-2 shadow-sm md:hidden">
           <span className="whitespace-nowrap text-sm font-semibold text-stone-800">默认额度</span>
           <label className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-stone-500">
             用户
@@ -670,7 +700,7 @@ export default function UsersPage() {
                       key={value}
                       type="button"
                       className={cn(
-                        "h-8 rounded-xl border px-3 text-sm font-medium transition",
+                        "hidden h-8 rounded-xl border px-3 text-sm font-medium transition sm:inline-flex sm:items-center",
                         quotaFilter === value
                           ? "border-stone-950 bg-stone-950 text-white"
                           : "border-stone-200 bg-white text-stone-600 hover:bg-stone-50 hover:text-stone-950",
@@ -684,7 +714,7 @@ export default function UsersPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-8 rounded-xl px-3 text-stone-600"
+                      className="hidden h-8 rounded-xl px-3 text-stone-600 sm:inline-flex"
                       onClick={resetFilters}
                     >
                       <X className="size-4" />
@@ -693,13 +723,22 @@ export default function UsersPage() {
                   ) : null}
                 </div>
               </div>
-              <div className="mt-2 text-xs font-medium text-stone-500">
+              <div className="mt-2 hidden text-xs font-medium text-stone-500 sm:block">
                 显示 {filteredUsers.length} / {users.length} 个用户
               </div>
-              <div className={cn("mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-stone-100 bg-stone-50/80 p-1.5", !hasSelectedUsers && "hidden")}>
+              <div className={cn("mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-stone-100 bg-stone-50/80 p-1.5", !hasSelectedUsers && "sm:hidden")}>
                 <span className="px-2 text-xs font-semibold text-stone-500">已选 {selectedUsers.length} 个</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-xl border-stone-200 bg-white px-3 sm:hidden"
+                  disabled={selectableFilteredUsers.length === 0 || isBulkBusy}
+                  onClick={toggleVisibleSelected}
+                >
+                  {allVisibleSelected ? "取消全选" : "全选当前"}
+                </Button>
                 <Input
-                  className="h-8 w-28 rounded-xl border-stone-200 bg-white text-sm"
+                  className="hidden h-8 w-28 rounded-xl border-stone-200 bg-white text-sm sm:block"
                   inputMode="numeric"
                   min={0}
                   type="number"
@@ -711,7 +750,7 @@ export default function UsersPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 rounded-xl border-stone-200 bg-white px-3"
+                  className="hidden h-8 rounded-xl border-stone-200 bg-white px-3 sm:inline-flex"
                   disabled={!hasSelectedUsers || isBulkBusy}
                   onClick={() => void saveBulkFiniteQuota()}
                 >
@@ -721,7 +760,7 @@ export default function UsersPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 rounded-xl px-3 text-stone-600"
+                  className="hidden h-8 rounded-xl px-3 text-stone-600 sm:inline-flex"
                   disabled={!hasSelectedUsers || isBulkBusy}
                   onClick={() => void saveBulkQuota(-1)}
                 >
@@ -862,6 +901,11 @@ export default function UsersPage() {
                           <div className="whitespace-nowrap font-semibold text-stone-950">
                             {formatUserQuota(user)}
                           </div>
+                          {formatQuotaPackage(user) ? (
+                            <div className="mt-1 whitespace-nowrap text-xs font-medium text-emerald-600">
+                              {formatQuotaPackage(user)}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="whitespace-nowrap px-5 py-4 font-semibold text-stone-950 md:text-center">
                           {Math.max(0, user.used_total)}
@@ -909,6 +953,15 @@ export default function UsersPage() {
                               >
                                 <Infinity className="size-4" />
                                 无限
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-9 whitespace-nowrap rounded-xl border-emerald-200 bg-emerald-50 px-3 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800"
+                                disabled={Boolean(savingQuotaIds[user.id])}
+                                onClick={() => void saveQuotaPackage(user)}
+                              >
+                                7天100张
                               </Button>
                             </div>
                           )}

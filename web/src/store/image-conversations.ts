@@ -18,6 +18,7 @@ export type StoredImage = {
   status?: "loading" | "success" | "error";
   b64_json?: string;
   url?: string;
+  source_url?: string;
   revised_prompt?: string;
   error?: string;
   completedAt?: string;
@@ -65,7 +66,7 @@ const legacyImageConversationStorage = localforage.createInstance({
 const IMAGE_CONVERSATIONS_KEY = "items";
 const MAX_STORED_IMAGE_CONVERSATIONS = 40;
 const MAX_STORED_TURNS_PER_CONVERSATION = 30;
-const MAX_STORED_REFERENCE_IMAGES_PER_TURN = 3;
+const MAX_STORED_REFERENCE_IMAGES_PER_TURN = 4;
 let imageConversationWriteQueue: Promise<void> = Promise.resolve();
 
 function normalizeStoredImage(image: StoredImage): StoredImage {
@@ -74,6 +75,7 @@ function normalizeStoredImage(image: StoredImage): StoredImage {
     b64_json: typeof image.url === "string" && image.url ? undefined : image.b64_json,
     taskId: typeof image.taskId === "string" && image.taskId ? image.taskId : undefined,
     url: typeof image.url === "string" && image.url ? image.url : undefined,
+    source_url: typeof image.source_url === "string" && image.source_url ? image.source_url : undefined,
     revised_prompt: typeof image.revised_prompt === "string" ? image.revised_prompt : undefined,
     completedAt: typeof image.completedAt === "string" && image.completedAt ? image.completedAt : undefined,
   };

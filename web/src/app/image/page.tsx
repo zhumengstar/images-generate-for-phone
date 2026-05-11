@@ -59,10 +59,17 @@ const MOBILE_COMPOSER_MIN_TOP = 8;
 const DESKTOP_MAX_CONCURRENT_IMAGE_TASKS = 2;
 const MOBILE_MAX_CONCURRENT_IMAGE_TASKS = 1;
 const MAX_QUEUED_IMAGE_TASKS = 4;
+const MAX_REFERENCE_IMAGES = 4;
 const REFERENCE_IMAGE_MAX_SIDE = 1600;
 const REFERENCE_IMAGE_TARGET_BYTES = 2 * 1024 * 1024;
 const REFERENCE_IMAGE_QUALITY_START = 0.86;
 const REFERENCE_IMAGE_QUALITY_MIN = 0.62;
+type BuiltReferenceImage = {
+  referenceImage: StoredReferenceImage;
+  file: File;
+};
+const builtReferenceImageCache = new Map<string, Promise<BuiltReferenceImage>>();
+const MAX_BUILT_REFERENCE_IMAGE_CACHE_SIZE = 12;
 
 function clampImageCount(value: string) {
   return String(Math.min(2, Math.max(1, Math.floor(Number(value) || 1))));
@@ -335,6 +342,34 @@ async function recallImageResult(image: ImageResponse["data"][number]) {
 }
 
 async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
+  const cacheKey = image.b64_json
+    ? `b64:${image.id}:${image.b64_json.length}`
+    : `url:${image.url || ""}|source:${image.source_url || ""}`;
+  const cached = builtReferenceImageCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const buildPromise = buildReferenceImageFromStoredImageUncached(image, fileName);
+  builtReferenceImageCache.set(cacheKey, buildPromise);
+  if (builtReferenceImageCache.size > MAX_BUILT_REFERENCE_IMAGE_CACHE_SIZE) {
+    const oldestKey = builtReferenceImageCache.keys().next().value;
+    if (oldestKey) {
+      builtReferenceImageCache.delete(oldestKey);
+    }
+  }
+  try {
+    return await buildPromise;
+  } catch (error) {
+    builtReferenceImageCache.delete(cacheKey);
+    throw error;
+  }
+}
+
+async function buildReferenceImageFromStoredImageUncached(
+  image: StoredImage,
+  fileName: string,
+): Promise<BuiltReferenceImage | null> {
   const direct = buildReferenceImageFromResult(image, fileName);
   if (direct) {
     const { file } = await compressReferenceImage(dataUrlToFile(direct.dataUrl, direct.name, direct.type));
@@ -351,15 +386,25 @@ async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: 
   if (!image.url) {
     return null;
   }
-  const { file } = await compressReferenceImage(await fetchImageAsFile(image.url, fileName));
-  return {
-    referenceImage: {
-      name: file.name,
-      type: file.type || "image/jpeg",
-      dataUrl: await readFileAsDataUrl(file),
-    },
-    file,
+  const buildFromUrl = async (url: string) => {
+    const { file } = await compressReferenceImage(await fetchImageAsFile(url, fileName));
+    return {
+      referenceImage: {
+        name: file.name,
+        type: file.type || "image/jpeg",
+        dataUrl: await readFileAsDataUrl(file),
+      },
+      file,
+    };
   };
+  try {
+    return await buildFromUrl(image.url);
+  } catch (error) {
+    if (!image.source_url || image.source_url === image.url) {
+      throw error;
+    }
+    return await buildFromUrl(image.source_url);
+  }
 }
 
 function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage {
@@ -379,8 +424,10 @@ function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage
       status: "success",
       b64_json: first.b64_json,
       url: normalizeImageUrl(first.url),
+      source_url: normalizeImageUrl(first.source_url),
       revised_prompt: first.revised_prompt,
       error: undefined,
+      completedAt: image.completedAt || task.updated_at || new Date().toISOString(),
     };
   }
 
@@ -398,6 +445,7 @@ function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage
     taskId: task.id,
     status: "loading",
     error: undefined,
+    completedAt: undefined,
   };
 }
 
@@ -724,6 +772,7 @@ function ImagePageContent() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: "one"; id: string } | { type: "all" } | null>(null);
   const [ipQuota, setIpQuota] = useState<IpQuotaResponse | null>(null);
   const [isPolishingPrompt, setIsPolishingPrompt] = useState(false);
+  const [composerExpandRequestId, setComposerExpandRequestId] = useState(0);
   const [mobileShellHeight, setMobileShellHeight] = useState<number | null>(null);
   const mobileShellHeightRef = useRef<number | null>(null);
 
@@ -1335,8 +1384,21 @@ function ImagePageContent() {
       return;
     }
 
+    const remainingSlots = Math.max(0, MAX_REFERENCE_IMAGES - referenceImages.length);
+    if (remainingSlots <= 0) {
+      toast.error(`最多只能加载 ${MAX_REFERENCE_IMAGES} 张参考图`);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      return;
+    }
+    const limitedFiles = files.slice(0, remainingSlots);
+    if (limitedFiles.length < files.length) {
+      toast.error(`最多只能加载 ${MAX_REFERENCE_IMAGES} 张参考图`);
+    }
+
     try {
-      const compressedResults = await compressReferenceImages(files);
+      const compressedResults = await compressReferenceImages(limitedFiles);
       const nextFiles = compressedResults.map((item) => item.file);
       const previews = await Promise.all(
         nextFiles.map(async (file) => ({
@@ -1346,8 +1408,8 @@ function ImagePageContent() {
         })),
       );
 
-      setReferenceImageFiles((prev) => [...prev, ...nextFiles]);
-      setReferenceImages((prev) => [...prev, ...previews]);
+      setReferenceImageFiles((prev) => [...prev, ...nextFiles].slice(0, MAX_REFERENCE_IMAGES));
+      setReferenceImages((prev) => [...prev, ...previews].slice(0, MAX_REFERENCE_IMAGES));
       if (compressedResults.some((item) => item.compressed)) {
         toast.success("参考图已压缩后上传");
       }
@@ -1358,7 +1420,7 @@ function ImagePageContent() {
       const message = error instanceof Error ? error.message : "读取参考图失败";
       toast.error(message);
     }
-  }, []);
+  }, [referenceImages.length]);
 
   const handleReferenceImageChange = useCallback(
     async (files: File[]) => {
@@ -1427,6 +1489,10 @@ function ImagePageContent() {
   const handleContinueEdit = useCallback(
     async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
       try {
+        if (referenceImages.length >= MAX_REFERENCE_IMAGES) {
+          toast.error(`最多只能加载 ${MAX_REFERENCE_IMAGES} 张参考图`);
+          return;
+        }
         const nextReference =
           "dataUrl" in image
             ? await (async () => {
@@ -1446,9 +1512,10 @@ function ImagePageContent() {
         }
 
         setSelectedConversationId(conversationId);
+        setComposerExpandRequestId((current) => current + 1);
 
-        setReferenceImages((prev) => [...prev, nextReference.referenceImage]);
-        setReferenceImageFiles((prev) => [...prev, nextReference.file]);
+        setReferenceImages((prev) => [...prev, nextReference.referenceImage].slice(0, MAX_REFERENCE_IMAGES));
+        setReferenceImageFiles((prev) => [...prev, nextReference.file].slice(0, MAX_REFERENCE_IMAGES));
         setImagePrompt("");
         textareaRef.current?.focus();
         toast.success("已加入当前参考图，继续输入描述即可编辑");
@@ -1457,7 +1524,7 @@ function ImagePageContent() {
         toast.error(message);
       }
     },
-    [],
+    [referenceImages.length],
   );
 
   const openLightbox = useCallback((images: ImageLightboxItem[], index: number) => {
@@ -1575,7 +1642,7 @@ function ImagePageContent() {
                       )
                     ).map((item) => item.file);
                     if (editFiles.length === 0) {
-                      throw new Error("缂栬緫浠诲姟缂哄皯鍙傝€冨浘锛岃閲嶆柊涓婁紶鍥剧墖");
+                      throw new Error("编辑任务缺少参考图，请重新上传图片");
                     }
                     return createImageEditTask(taskId, editFiles, activeTurn.prompt, activeTurn.model, activeTurn.size);
                   }
@@ -1623,6 +1690,7 @@ function ImagePageContent() {
                 status: "success" as const,
                 b64_json: first.b64_json,
                 url: first.url,
+                source_url: normalizeImageUrl(first.source_url),
                 revised_prompt: first.revised_prompt,
                 error: undefined,
                 completedAt: new Date().toISOString(),
@@ -1657,6 +1725,7 @@ function ImagePageContent() {
                   status: "success" as const,
                   b64_json: recoveredImage.b64_json,
                   url: recoveredImage.url,
+                  source_url: normalizeImageUrl(recoveredImage.source_url),
                   revised_prompt: recoveredImage.revised_prompt,
                   error: undefined,
                   completedAt: new Date().toISOString(),
@@ -2070,7 +2139,10 @@ function ImagePageContent() {
         </div>
 
         <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-          <DialogContent className="flex h-[min(88dvh,760px)] w-[94vw] max-w-[460px] flex-col overflow-hidden rounded-3xl border-white/80 bg-white p-0 shadow-[0_32px_110px_-38px_rgba(15,23,42,0.45)] sm:h-[min(82dvh,760px)] sm:rounded-[36px]">
+          <DialogContent
+            className="flex h-[min(88dvh,760px)] w-[94vw] max-w-[460px] flex-col overflow-hidden rounded-3xl border-white/80 bg-white p-0 shadow-[0_32px_110px_-38px_rgba(15,23,42,0.45)] sm:h-[min(82dvh,760px)] sm:rounded-[36px]"
+            onClick={() => setIsHistoryOpen(false)}
+          >
             <DialogHeader className="px-6 pt-7 pb-4 sm:px-8">
               <DialogTitle className="flex items-center gap-2 text-xl font-bold tracking-tight">
                 <History className="size-5" />
@@ -2207,6 +2279,7 @@ function ImagePageContent() {
               runningTaskCount={taskStats.running}
               isPolishingPrompt={isPolishingPrompt}
               referenceImages={referenceImages}
+              expandRequestId={composerExpandRequestId}
               textareaRef={textareaRef}
               fileInputRef={fileInputRef}
               onPromptChange={setImagePrompt}

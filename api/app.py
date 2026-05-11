@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from api import accounts, ai, image_tasks, register, system
 from api.support import client_public_ip, device_fingerprint, extract_bearer_token, ip_fingerprint_identity, ip_fingerprint_key, require_identity, resolve_web_asset, start_limited_account_watcher
@@ -49,6 +50,7 @@ IP_QUOTAS_PATH = DATA_DIR / "ip_image_quotas.json"
 IP_IMAGE_TASKS_PATH = DATA_DIR / "ip_image_tasks.json"
 IMAGE_SHARE_REWARDS_PATH = DATA_DIR / "image_share_rewards.json"
 PERSISTED_IMAGE_DIR_NAME = "generated"
+PROXY_IMAGE_CACHE_DIR_NAME = "proxy-cache"
 IP_QUOTA_LOCK = Lock()
 IP_IMAGE_TASKS_LOCK = Lock()
 IMAGE_SHARE_REWARDS_LOCK = Lock()
@@ -384,6 +386,65 @@ def _assert_allowed_proxy_image_url(url: str) -> str:
     return resolved
 
 
+def _proxy_image_cache_key(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _proxy_image_cache_paths(url: str) -> tuple[Path, Path]:
+    cache_dir = config.images_dir / PROXY_IMAGE_CACHE_DIR_NAME
+    digest = _proxy_image_cache_key(url)
+    return cache_dir / f"{digest}.img", cache_dir / f"{digest}.type"
+
+
+def _read_cached_proxy_image(url: str) -> tuple[bytes, str] | None:
+    asset_path, type_path = _proxy_image_cache_paths(url)
+    if not asset_path.exists() or not type_path.exists():
+        return None
+    try:
+        content = asset_path.read_bytes()
+        if not content:
+            return None
+        content_type = type_path.read_text(encoding="utf-8").strip() or "image/png"
+        return content, content_type
+    except Exception:
+        return None
+
+
+def _write_cached_proxy_image(url: str, content: bytes, content_type: str) -> None:
+    asset_path, type_path = _proxy_image_cache_paths(url)
+    asset_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = asset_path.with_suffix(".tmp")
+    try:
+        temp_path.write_bytes(content)
+        temp_path.replace(asset_path)
+        type_path.write_text(content_type, encoding="utf-8")
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _fetch_proxy_image_content(image_url: str) -> tuple[bytes, str]:
+    cached = _read_cached_proxy_image(image_url)
+    if cached is not None:
+        return cached
+    request = urllib.request.Request(
+        image_url,
+        headers={"Accept": "image/*", "User-Agent": "curl/8.0.1"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
+        content = _read_limited_response(response, IMAGE_EDIT_MAX_UPLOAD_BYTES)
+        content_type = response.headers.get("Content-Type") or "image/png"
+    if not content_type.lower().startswith("image/"):
+        raise ValueError("not an image")
+    with Image.open(BytesIO(content)) as image:
+        image.verify()
+    _write_cached_proxy_image(image_url, content, content_type)
+    return content, content_type
+
+
 def _persist_image_item(item: Any, headers: dict[str, str], output_dir: Path, asset_name: str) -> Any:
     if not isinstance(item, dict):
         return item
@@ -407,12 +468,21 @@ def _persist_image_item(item: Any, headers: dict[str, str], output_dir: Path, as
                         if not chunk:
                             break
                         output.write(chunk)
+        with Image.open(asset_path) as image:
+            image.verify()
     except Exception:
+        try:
+            asset_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return item
-    return {
+    persisted_item = {
         **next_item,
         "url": f"/images/{PERSISTED_IMAGE_DIR_NAME}/{asset_name}",
     }
+    if url:
+        persisted_item["source_url"] = _proxy_image_url(url)
+    return persisted_item
 
 
 def _persist_image_data(data: dict[str, Any], headers: dict[str, str], scope_key: str) -> dict[str, Any]:
@@ -1304,21 +1374,12 @@ def create_app() -> FastAPI:
     @app.get("/api/ip-limited/image-proxy")
     async def proxy_ip_limited_image(url: str):
         image_url = _assert_allowed_proxy_image_url(url)
-        request = urllib.request.Request(
-            image_url,
-            headers={"Accept": "image/*", "User-Agent": "curl/8.0.1"},
-            method="GET",
-        )
         try:
-            with urllib.request.urlopen(request, timeout=IMAGE_PROXY_TIMEOUT) as response:
-                content = _read_limited_response(response, IMAGE_EDIT_MAX_UPLOAD_BYTES)
-                content_type = response.headers.get("Content-Type") or "image/png"
+            content, content_type = await run_in_threadpool(_fetch_proxy_image_content, image_url)
         except urllib.error.HTTPError as exc:
             return JSONResponse(status_code=exc.code, content={"error": "读取图片失败"})
         except Exception:
             return JSONResponse(status_code=502, content={"error": "读取图片失败"})
-        if not content_type.lower().startswith("image/"):
-            return JSONResponse(status_code=400, content={"error": "不是有效图片"})
         return Response(content=content, media_type=content_type)
 
     @app.post("/api/ip-limited/quota/refund")
